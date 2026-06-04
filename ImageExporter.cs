@@ -8,19 +8,7 @@ using NXOpen.Preferences;
 /// </summary>
 public class ImageExporter : ITransactionHandler
 {
-    // ========== 配置区域：在这里修改截图视角 ==========
-    private static readonly SnapViewType[] CaptureViews =
-    {
-        SnapViewType.Trimetric,
-        SnapViewType.Isometric,
-        SnapViewType.Top,
-        SnapViewType.Front,
-        SnapViewType.Right,
-        SnapViewType.Back,
-        SnapViewType.Bottom,
-        SnapViewType.Left
-    };
-    // ================================================================
+    private SnapViewType[] _captureViews;
 
     /// <summary>
     /// 定义所有截图视角的枚举值
@@ -35,6 +23,11 @@ public class ImageExporter : ITransactionHandler
         Back,
         Bottom,
         Left
+    }
+
+    public ImageExporter(SnapViewType[] views)
+    {
+        _captureViews = views ?? new SnapViewType[0];
     }
 
     /// <summary>
@@ -74,7 +67,7 @@ public class ImageExporter : ITransactionHandler
             System.IO.Directory.CreateDirectory(outputFolder); // 确保目录存在
 
             // 遍历配置的视角，逐个截图
-            foreach (SnapViewType view in CaptureViews)
+            foreach (SnapViewType view in _captureViews)
             {
                 SetView(part, view);
                 string viewName = view.ToString();

@@ -259,15 +259,68 @@ public class ClassLibrary1
         int errorCode = 0;
         try
         {
-            //---- Enter your callback code here -----
+            TraversalConfig config = new TraversalConfig();
+            
+            config.filePath = filePath.Path;
+            
+            string namePatternsText = namePatterns.Value;
+            config.namePatterns = ParseMultilineString(namePatternsText);
+            
+            string idPatternsText = IDPattern.Value;
+            config.idPatterns = ParseMultilineString(idPatternsText);
+            
+            config.flagImageOn = flagImageOn.Value;
+            
+            if (config.flagImageOn && viewList != null)
+            {
+                var selectedItems = viewList.GetSelectedItems();
+                System.Collections.Generic.List<ImageExporter.SnapViewType> views = 
+                    new System.Collections.Generic.List<ImageExporter.SnapViewType>();
+                foreach (var item in selectedItems)
+                {
+                    if (System.Enum.TryParse<ImageExporter.SnapViewType>(item.Label, out var viewType))
+                    {
+                        views.Add(viewType);
+                    }
+                }
+                config.viewList = views.ToArray();
+            }
+            
+            config.flagXYZOn = flagXYZOn.Value;
+            
+            if (config.flagXYZOn && coordinateSelection != null)
+            {
+                config.coordinateSelection = coordinateSelection.Value;
+            }
+            
+            AssemblyTraverser.Main(config);
         }
         catch (Exception ex)
         {
-            //---- Enter your exception handling code here -----
             errorCode = 1;
             theUI.NXMessageBox.Show("Block Styler", NXMessageBox.DialogType.Error, ex.ToString());
         }
         return errorCode;
+    }
+    
+    private string[] ParseMultilineString(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return new string[0];
+        }
+        
+        string[] lines = text.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+        System.Collections.Generic.List<string> result = new System.Collections.Generic.List<string>();
+        foreach (string line in lines)
+        {
+            string trimmed = line.Trim();
+            if (!string.IsNullOrWhiteSpace(trimmed))
+            {
+                result.Add(trimmed);
+            }
+        }
+        return result.ToArray();
     }
     
     //------------------------------------------------------------------------------

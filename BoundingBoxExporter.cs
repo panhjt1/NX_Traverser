@@ -9,22 +9,15 @@ using NXOpen.UF;
 /// </summary>
 public class BoundingBoxExporter : ITransactionHandler
 {
-    // ========== 配置区域 ==========
-    // CSV文件名（保存到 AssemblyTraverser 中配置的 OutputFolder）
     private static readonly string CsvFileName = "BoundingBoxResult.csv";
-
-    // 包容盒坐标系模式：
-    // "ACS" = 绝对坐标系（默认）
-    // "WCS" = 工作坐标系
-    private static readonly string BoundingBoxCsysMode = "ACS";
-    // ================================================================
-
-    // CSV 写入器
+    
+    private string _csysMode;
     private StreamWriter _csvWriter;
     private bool _headerWritten;
 
-    public BoundingBoxExporter()
+    public BoundingBoxExporter(string csysMode)
     {
+        _csysMode = string.IsNullOrEmpty(csysMode) ? "ACS" : csysMode;
         _csvWriter = null;
         _headerWritten = false;
     }
@@ -84,7 +77,7 @@ public class BoundingBoxExporter : ITransactionHandler
     /// </summary>
     private double[] GetBoundingBoxDimensions(Part part, Session theSession)
     {
-        switch (BoundingBoxCsysMode.ToUpper())
+        switch (_csysMode.ToUpper())
         {
             case "WCS":
                 return GetBoundingBoxWCS(part, theSession);
