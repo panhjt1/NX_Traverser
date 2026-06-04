@@ -130,7 +130,7 @@ public class ClassLibrary1
     //------------------------------------------------------------------------------
     // This method specifies how a shared image is unloaded from memory
     // within NX. This method gives you the capability to unload an
-    // internal NX Open application or user exit from NX. Specify any
+    // internal NX Open application or user  exit from NX. Specify any
     // one of the three constants as a return value to determine the type
     // of unload to perform:
     //
@@ -213,7 +213,6 @@ public class ClassLibrary1
             IDPattern = (NXOpen.BlockStyler.MultilineString)theDialog.TopBlock.FindBlock("IDPattern");
             group = (NXOpen.BlockStyler.Group)theDialog.TopBlock.FindBlock("group");
             flagImageOn = (NXOpen.BlockStyler.Toggle)theDialog.TopBlock.FindBlock("flagImageOn");
-            flagImageOn = (NXOpen.BlockStyler.Toggle)theDialog.TopBlock.FindBlock("flagImageOn");
             viewList = (NXOpen.BlockStyler.ListBox)theDialog.TopBlock.FindBlock("viewList");
             group0 = (NXOpen.BlockStyler.Group)theDialog.TopBlock.FindBlock("group0");
             flagXYZOn = (NXOpen.BlockStyler.Toggle)theDialog.TopBlock.FindBlock("flagXYZOn");
@@ -262,52 +261,83 @@ public class ClassLibrary1
         {
             TraversalConfig config = new TraversalConfig();
 
-            // 获取控件属性
-            PropertyList nameProps = GetBlockProperties("namePatterns");
-            PropertyList idProps = GetBlockProperties("IDPattern");
-            PropertyList viewProps = GetBlockProperties("viewList");
-            PropertyList coordProps = GetBlockProperties("coordinateSelection");
-
+            // 获取文件夹路径
             config.filePath = filePath.Path;
 
-            string[] namePatternsText = nameProps.GetStrings();
-            config.namePatterns = namePatternsText;
+            // 使用 PropertyList 获取 MultilineString 和其他控件值
+            // 先尝试直接访问控件属性，如果失败则使用配置属性
+            try
+            {
+                config.namePatterns = ParseMultilineStringFromPropertyList("namePatterns");
+            }
+            catch
+            {
+                config.namePatterns = new string[] { "*" };
+            }
 
-            string[] idPatternsText = idProps.GetStrings();
-            config.idPatterns = idPatternsText;
+            try
+            {
+                config.idPatterns = ParseMultilineStringFromPropertyList("IDPattern");
+            }
+            catch
+            {
+                config.idPatterns = new string[] { "*" };
+            }
 
             config.flagImageOn = flagImageOn.Value;
 
             if (config.flagImageOn && viewList != null)
             {
-                int[] selectedIndices = viewList.GetSelectedItems();
-                System.Collections.Generic.List<ImageExporter.SnapViewType> views = 
-                    new System.Collections.Generic.List<ImageExporter.SnapViewType>();
-                string[] listItems = viewProps.GetStrings();
-                foreach (int idx in selectedIndices)
+                try
                 {
-                    if (idx >= 0 && idx < listItems.Length)
+                    int[] selectedIndices = viewList.GetSelectedItems();
+                    System.Collections.Generic.List<ImageExporter.SnapViewType> views = 
+                        new System.Collections.Generic.List<ImageExporter.SnapViewType>();
+                    
+                    // 尝试从 PropertyList 获取 ListBox 项目
+                    string[] listItems = null;
+                    try
                     {
-                        if (System.Enum.TryParse<ImageExporter.SnapViewType>(listItems[idx], out var viewType))
+                        listItems = GetListBoxItemsFromPropertyList("viewList");
+                    }
+                    catch
+                    {
+                        // 如果 PropertyList 失败，使用默认视图
+                        listItems = Enum.GetNames(typeof(ImageExporter.SnapViewType));
+                    }
+
+                    foreach (int idx in selectedIndices)
+                    {
+                        if (idx >= 0 && idx < listItems.Length)
                         {
-                            views.Add(viewType);
+                            if (System.Enum.TryParse<ImageExporter.SnapViewType>(listItems[idx], out var viewType))
+                            {
+                                views.Add(viewType);
+                            }
                         }
                     }
+                    config.viewList = views.ToArray();
                 }
-                config.viewList = views.ToArray();
+                catch
+                {
+                    // 如果失败使用默认视图
+                    config.viewList = new ImageExporter.SnapViewType[] { ImageExporter.SnapViewType.Isometric };
+                }
             }
 
             config.flagXYZOn = flagXYZOn.Value;
 
             if (config.flagXYZOn && coordinateSelection != null)
             {
-                config.coordinateSelection = coordProps.GetString();
+                try
+                {
+                    config.coordinateSelection = GetEnumerationValueFromPropertyList("coordinateSelection");
+                }
+                catch
+                {
+                    config.coordinateSelection = "ACS";
+                }
             }
-
-            nameProps.Dispose();
-            idProps.Dispose();
-            viewProps.Dispose();
-            coordProps.Dispose();
 
             AssemblyTraverser.Run(config);
         }
@@ -319,6 +349,79 @@ public class ClassLibrary1
         return errorCode;
     }
 
+    // 从 PropertyList 获取多行文本的辅助方法
+    private string[] ParseMultilineStringFromPropertyList(string blockId)
+    {
+        try
+        {
+            PropertyList props = theDialog.GetBlockProperties(blockId);
+            try
+            {
+                // 尝试常见的属性名
+                try { return props.GetStrings("String"); } catch { }
+                try { return props.GetStrings("Strings"); } catch { }
+                try { return props.GetStrings("Value"); } catch { }
+                try { return props.GetStrings("Text"); } catch { }
+            }
+            finally
+            {
+                props.Dispose();
+            }
+        }
+        catch
+        {
+        }
+        return new string[] { "*" };
+    }
+
+    // 从 PropertyList 获取 ListBox 项目的辅助方法
+    private string[] GetListBoxItemsFromPropertyList(string blockId)
+    {
+        try
+        {
+            PropertyList props = theDialog.GetBlockProperties(blockId);
+            try
+            {
+                // 尝试常见的属性名
+                try { return props.GetStrings("ListItems"); } catch { }
+                try { return props.GetStrings("Items"); } catch { }
+                try { return props.GetStrings("Strings"); } catch { }
+            }
+            finally
+            {
+                props.Dispose();
+            }
+        }
+        catch
+        {
+        }
+        return Enum.GetNames(typeof(ImageExporter.SnapViewType));
+    }
+
+    // 从 PropertyList 获取 Enumeration 值的辅助方法
+    private string GetEnumerationValueFromPropertyList(string blockId)
+    {
+        try
+        {
+            PropertyList props = theDialog.GetBlockProperties(blockId);
+            try
+            {
+                // 尝试常见的属性名
+                try { return props.GetString("Value"); } catch { }
+                try { return props.GetString("SelectedValue"); } catch { }
+                try { return props.GetString("String"); } catch { }
+            }
+            finally
+            {
+                props.Dispose();
+            }
+        }
+        catch
+        {
+        }
+        return "ACS";
+    }
+
     //------------------------------------------------------------------------------
     //Callback Name: update_cb
     //------------------------------------------------------------------------------
@@ -328,31 +431,31 @@ public class ClassLibrary1
         {
             if(block == filePath)
             {
-            //---------Enter your code here-----------
+            //--------- Enter your code here-----------
             }
             else if(block == namePatterns)
             {
-            //---------Enter your code here-----------
+            //--------- Enter your code here-----------
             }
             else if(block == IDPattern)
             {
-            //---------Enter your code here-----------
+            //--------- Enter your code here-----------
             }
             else if(block == flagImageOn)
             {
-            //---------Enter your code here-----------
+            //--------- Enter your code here-----------
             }
             else if(block == viewList)
             {
-            //---------Enter your code here-----------
+            //--------- Enter your code here-----------
             }
             else if(block == flagXYZOn)
             {
-            //---------Enter your code here-----------
+            //--------- Enter your code here-----------
             }
             else if(block == coordinateSelection)
             {
-            //---------Enter your code here-----------
+            //--------- Enter your code here-----------
             }
         }
         catch (Exception ex)
