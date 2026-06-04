@@ -57,7 +57,7 @@ public class ClassLibrary1
     private NXOpen.BlockStyler.Group group0;// Block type: Group
     private NXOpen.BlockStyler.Toggle flagXYZOn;// Block type: Toggle
     private NXOpen.BlockStyler.Enumeration coordinateSelection;// Block type: Enumeration
-    
+
     //------------------------------------------------------------------------------
     //Constructor for NX Styler class
     //------------------------------------------------------------------------------
@@ -90,7 +90,7 @@ public class ClassLibrary1
     //        1.) From where NX session is launched
     //        2.) $UGII_USER_DIR/application
     //        3.) For released applications, using UGII_CUSTOM_DIRECTORY_FILE is highly
-    //            recommended. This variable is set to a full directory path to a file 
+    //            recommended. This variable is set to a full directory path to a file
     //            containing a list of root directories for all custom applications.
     //            e.g., UGII_CUSTOM_DIRECTORY_FILE=$UGII_BASE_DIR\ugii\menus\custom_dirs.dat
     //
@@ -102,7 +102,7 @@ public class ClassLibrary1
     //
     //    2. USER EXIT
     //
-    //        1) Create the Shared Library -- Refer "Block UI Styler programmer's guide"
+    //        1) Create the Shared Library -- Refer "Block UI Styler programmer's guide
     //        2) Invoke the Shared Library through File->Execute->NX Open menu.
     //
     //------------------------------------------------------------------------------
@@ -130,7 +130,7 @@ public class ClassLibrary1
     //------------------------------------------------------------------------------
     // This method specifies how a shared image is unloaded from memory
     // within NX. This method gives you the capability to unload an
-    // internal NX Open application or user  exit from NX. Specify any
+    // internal NX Open application or user exit from NX. Specify any
     // one of the three constants as a return value to determine the type
     // of unload to perform:
     //
@@ -150,7 +150,7 @@ public class ClassLibrary1
          return System.Convert.ToInt32(Session.LibraryUnloadOption.Immediately);
         // return System.Convert.ToInt32(Session.LibraryUnloadOption.AtTermination);
     }
-    
+
     //------------------------------------------------------------------------------
     // Following method cleanup any housekeeping chores that may be needed.
     // This method is automatically called by NX.
@@ -167,7 +167,7 @@ public class ClassLibrary1
             theUI.NXMessageBox.Show("Block Styler", NXMessageBox.DialogType.Error, ex.ToString());
         }
     }
-    
+
     //------------------------------------------------------------------------------
     //This method shows the dialog on the screen
     //------------------------------------------------------------------------------
@@ -184,7 +184,7 @@ public class ClassLibrary1
         }
         return 0;
     }
-    
+
     //------------------------------------------------------------------------------
     //Method Name: Dispose
     //------------------------------------------------------------------------------
@@ -196,11 +196,11 @@ public class ClassLibrary1
             theDialog = null;
         }
     }
-    
+
     //------------------------------------------------------------------------------
     //---------------------Block UI Styler Callback Functions--------------------------
     //------------------------------------------------------------------------------
-    
+
     //------------------------------------------------------------------------------
     //Callback Name: initialize_cb
     //------------------------------------------------------------------------------
@@ -213,6 +213,7 @@ public class ClassLibrary1
             IDPattern = (NXOpen.BlockStyler.MultilineString)theDialog.TopBlock.FindBlock("IDPattern");
             group = (NXOpen.BlockStyler.Group)theDialog.TopBlock.FindBlock("group");
             flagImageOn = (NXOpen.BlockStyler.Toggle)theDialog.TopBlock.FindBlock("flagImageOn");
+            flagImageOn = (NXOpen.BlockStyler.Toggle)theDialog.TopBlock.FindBlock("flagImageOn");
             viewList = (NXOpen.BlockStyler.ListBox)theDialog.TopBlock.FindBlock("viewList");
             group0 = (NXOpen.BlockStyler.Group)theDialog.TopBlock.FindBlock("group0");
             flagXYZOn = (NXOpen.BlockStyler.Toggle)theDialog.TopBlock.FindBlock("flagXYZOn");
@@ -221,9 +222,9 @@ public class ClassLibrary1
             //Registration of ListBox specific callbacks
             //------------------------------------------------------------------------------
             //viewList.SetAddHandler(new NXOpen.BlockStyler.ListBox.AddCallback(AddCallback));
-            
+
             //viewList.SetDeleteHandler(new NXOpen.BlockStyler.ListBox.DeleteCallback(DeleteCallback));
-            
+
             //------------------------------------------------------------------------------
         }
         catch (Exception ex)
@@ -232,11 +233,11 @@ public class ClassLibrary1
             theUI.NXMessageBox.Show("Block Styler", NXMessageBox.DialogType.Error, ex.ToString());
         }
     }
-    
+
     //------------------------------------------------------------------------------
     //Callback Name: dialogShown_cb
-    //This callback is executed just before the dialog launch. Thus any value set 
-    //here will take precedence and dialog will be launched showing that value. 
+    //This callback is executed just before the dialog launch. Thus any value set
+    //here will take precedence and dialog will be launched showing that value.
     //------------------------------------------------------------------------------
     public void dialogShown_cb()
     {
@@ -250,7 +251,7 @@ public class ClassLibrary1
             theUI.NXMessageBox.Show("Block Styler", NXMessageBox.DialogType.Error, ex.ToString());
         }
     }
-    
+
     //------------------------------------------------------------------------------
     //Callback Name: apply_cb
     //------------------------------------------------------------------------------
@@ -260,39 +261,54 @@ public class ClassLibrary1
         try
         {
             TraversalConfig config = new TraversalConfig();
-            
+
+            // 获取控件属性
+            PropertyList nameProps = GetBlockProperties("namePatterns");
+            PropertyList idProps = GetBlockProperties("IDPattern");
+            PropertyList viewProps = GetBlockProperties("viewList");
+            PropertyList coordProps = GetBlockProperties("coordinateSelection");
+
             config.filePath = filePath.Path;
-            
-            string namePatternsText = namePatterns.Value;
-            config.namePatterns = ParseMultilineString(namePatternsText);
-            
-            string idPatternsText = IDPattern.Value;
-            config.idPatterns = ParseMultilineString(idPatternsText);
-            
+
+            string[] namePatternsText = nameProps.GetStrings();
+            config.namePatterns = namePatternsText;
+
+            string[] idPatternsText = idProps.GetStrings();
+            config.idPatterns = idPatternsText;
+
             config.flagImageOn = flagImageOn.Value;
-            
+
             if (config.flagImageOn && viewList != null)
             {
-                var selectedItems = viewList.GetSelectedItems();
+                int[] selectedIndices = viewList.GetSelectedItems();
                 System.Collections.Generic.List<ImageExporter.SnapViewType> views = 
                     new System.Collections.Generic.List<ImageExporter.SnapViewType>();
-                foreach (var item in selectedItems)
+                string[] listItems = viewProps.GetStrings();
+                foreach (int idx in selectedIndices)
                 {
-                    if (System.Enum.TryParse<ImageExporter.SnapViewType>(item.Label, out var viewType))
+                    if (idx >= 0 && idx < listItems.Length)
                     {
-                        views.Add(viewType);
+                        if (System.Enum.TryParse<ImageExporter.SnapViewType>(listItems[idx], out var viewType))
+                        {
+                            views.Add(viewType);
+                        }
                     }
                 }
                 config.viewList = views.ToArray();
             }
-            
+
             config.flagXYZOn = flagXYZOn.Value;
-            
+
             if (config.flagXYZOn && coordinateSelection != null)
             {
-                config.coordinateSelection = coordinateSelection.Value;
+                config.coordinateSelection = coordProps.GetString();
             }
-            
+
+            nameProps.Dispose();
+            idProps.Dispose();
+            viewProps.Dispose();
+            coordProps.Dispose();
+
             AssemblyTraverser.Run(config);
         }
         catch (Exception ex)
@@ -302,27 +318,7 @@ public class ClassLibrary1
         }
         return errorCode;
     }
-    
-    private string[] ParseMultilineString(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return new string[0];
-        }
-        
-        string[] lines = text.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-        System.Collections.Generic.List<string> result = new System.Collections.Generic.List<string>();
-        foreach (string line in lines)
-        {
-            string trimmed = line.Trim();
-            if (!string.IsNullOrWhiteSpace(trimmed))
-            {
-                result.Add(trimmed);
-            }
-        }
-        return result.ToArray();
-    }
-    
+
     //------------------------------------------------------------------------------
     //Callback Name: update_cb
     //------------------------------------------------------------------------------
@@ -366,7 +362,7 @@ public class ClassLibrary1
         }
         return 0;
     }
-    
+
     //------------------------------------------------------------------------------
     //Callback Name: ok_cb
     //------------------------------------------------------------------------------
@@ -392,13 +388,13 @@ public class ClassLibrary1
     //public int  AddCallback (NXOpen.BlockStyler.ListBox list_box)
     //{
     //}
-    
+
     //public int  DeleteCallback(NXOpen.BlockStyler.ListBox list_box)
     //{
     //}
-    
+
     //------------------------------------------------------------------------------
-    
+
     //------------------------------------------------------------------------------
     //Function Name: GetBlockProperties
     //Returns the propertylist of the specified BlockID
@@ -417,6 +413,5 @@ public class ClassLibrary1
         }
         return plist;
     }
-    
-}
 
+}
