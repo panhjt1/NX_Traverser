@@ -200,7 +200,10 @@ public class AssemblyTraverser
                 new string(' ', level * 2), compId, compName, compId));
             foreach (Component child in children)
             {
-                TraverseAssembly(child, ufSession, theSession, level + 1, outputFolder);
+                if (child != null && child.Tag != Tag.Null)
+                {
+                    TraverseAssembly(child, ufSession, theSession, level + 1, outputFolder);
+                }
             }
         }
         else
