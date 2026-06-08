@@ -40,13 +40,6 @@ public class AssemblyTraverser
 
     private static void InternalMain()
     {
-        // 重置停止标记
-        StopForm.StopRequested = false;
-
-        // 启动自己的控制窗口（非模态）
-        StopForm stopForm = new StopForm();
-        stopForm.Show();   // 非模态，不阻塞
-
         var theSession = Session.GetSession();
         var ufSession = UFSession.GetUFSession();
         Part workPart = theSession.Parts.Work;
@@ -83,12 +76,6 @@ public class AssemblyTraverser
             {
                 handler.Finish();
             }
-
-            // 任务完成后关闭窗口
-            if (stopForm.InvokeRequired)
-                stopForm.BeginInvoke(new Action(() => stopForm.Close()));
-            else
-                stopForm.Close();
         }
     }
 
@@ -111,9 +98,7 @@ public class AssemblyTraverser
             return;
         }
 
-        // ① 主动让UI线程处理消息，并检查是否已点击停止
-        System.Windows.Forms.Application.DoEvents();
-        if (StopForm.StopRequested) return;
+        
 
         // 1. 按需加载当前组件（确保子件结构可见）
         try
