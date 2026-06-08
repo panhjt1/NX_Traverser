@@ -64,6 +64,9 @@ public class AssemblyTraverser
             : _config.filePath;
         System.IO.Directory.CreateDirectory(outputFolder);
 
+        // 创建NX原生"工作进行中"对话框（带停止按钮）
+        ufSession.Ui.CreateWorkingDialog("正在进行装配遍历...");
+
         // 开始深度优先遍历，初始层级为0
         try
         {
@@ -71,6 +74,9 @@ public class AssemblyTraverser
         }
         finally
         {
+            // 关闭工作进行中对话框
+            ufSession.Ui.CloseWorkingDialog();
+
             // 关闭所有事务处理器（如CSV文件等资源）
             foreach (var handler in _transactionHandlers)
             {
@@ -98,7 +104,8 @@ public class AssemblyTraverser
             return;
         }
 
-        
+        // 检查用户是否点击了停止按钮
+        if (ufSession.Ui.CheckBreak()) return;
 
         // 1. 按需加载当前组件（确保子件结构可见）
         try
@@ -185,6 +192,7 @@ public class AssemblyTraverser
                 new string(' ', level * 2), compId, compName, compId));
             foreach (Component child in children)
             {
+                if (ufSession.Ui.CheckBreak()) return;
                 if (child != null && child.Tag != Tag.Null)
                 {
                     TraverseAssembly(child, ufSession, theSession, level + 1, outputFolder);
