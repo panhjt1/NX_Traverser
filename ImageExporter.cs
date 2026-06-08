@@ -130,16 +130,34 @@ public class ImageExporter : ITransactionHandler
         {
             var ufSession = UFSession.GetUFSession();
             
-            // 获取当前抑制模式
-            ufSession.UI.AskSuppressDialogs(out originalMode);
-            
-            // 设置所有对话框抑制
-            // 使用 UF_UI_SUPPRESS_ALL_DIALOGS 以完全抑制只读部件对话框
-            var flagField = typeof(UFConstants).GetField("UF_UI_SUPPRESS_ALL_DIALOGS");
-            if (flagField != null)
+            // 使用反射查找 UI 相关的属性和方法
+            var uiProperty = ufSession.GetType().GetProperty("UI");
+            if (uiProperty != null)
             {
-                int suppressFlag = (int)flagField.GetValue(null);
-                ufSession.UI.SetSuppressDialogs(suppressFlag);
+                var uiObject = uiProperty.GetValue(ufSession);
+                if (uiObject != null)
+                {
+                    var askMethod = uiObject.GetType().GetMethod("AskSuppressDialogs");
+                    if (askMethod != null)
+                    {
+                        var parameters = new object[] { originalMode };
+                        askMethod.Invoke(uiObject, parameters);
+                        originalMode = (int)parameters[0];
+                        
+                        var setMethod = uiObject.GetType().GetMethod("SetSuppressDialogs");
+                        if (setMethod != null)
+                        {
+                            // 尝试获取 UF_UI_SUPPRESS_ALL_DIALOGS 常量
+                            var flagField = typeof(UFConstants).GetField("UF_UI_SUPPRESS_ALL_DIALOGS");
+                            int suppressFlag = 1; // 默认值
+                            if (flagField != null)
+                            {
+                                suppressFlag = (int)flagField.GetValue(null);
+                            }
+                            setMethod.Invoke(uiObject, new object[] { suppressFlag });
+                        }
+                    }
+                }
             }
         }
         catch
@@ -159,7 +177,21 @@ public class ImageExporter : ITransactionHandler
         try
         {
             var ufSession = UFSession.GetUFSession();
-            ufSession.UI.SetSuppressDialogs(originalMode);
+            
+            // 使用反射查找 UI 相关的属性和方法
+            var uiProperty = ufSession.GetType().GetProperty("UI");
+            if (uiProperty != null)
+            {
+                var uiObject = uiProperty.GetValue(ufSession);
+                if (uiObject != null)
+                {
+                    var setMethod = uiObject.GetType().GetMethod("SetSuppressDialogs");
+                    if (setMethod != null)
+                    {
+                        setMethod.Invoke(uiObject, new object[] { originalMode });
+                    }
+                }
+            }
         }
         catch
         {
