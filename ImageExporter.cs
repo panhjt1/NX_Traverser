@@ -52,9 +52,9 @@ public class ImageExporter : ITransactionHandler
 
         try
         {
-            // 将当前零件设为显示部件，修改第三个参数为 true
+            // 将当前零件设为显示部件
             PartLoadStatus loadStatus;
-            theSession.Parts.SetDisplay(part, false, true, out loadStatus);
+            theSession.Parts.SetDisplay(part, false, false, out loadStatus);
 
             // 使用传入的友好名称作为基础文件名，并清理非法字符
             string baseName = descriptiveName;
@@ -88,7 +88,7 @@ public class ImageExporter : ITransactionHandler
             {
                 try
                 {
-                    theSession.Parts.SetDisplay(originalDisplayPart, false, true, out PartLoadStatus restoreStatus);
+                    theSession.Parts.SetDisplay(originalDisplayPart, false, false, out PartLoadStatus restoreStatus);
                 }
                 catch { /* 忽略恢复错误 */ }
             }

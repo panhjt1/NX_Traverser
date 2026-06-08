@@ -71,6 +71,42 @@ public class AssemblyTraverser
             : _config.filePath;
         System.IO.Directory.CreateDirectory(outputFolder);
 
+        // 开始遍历前全局抑制只读对话框
+        int originalSuppressMode = 0;
+        bool suppressEnabled = false;
+        try
+        {
+            var uiProperty = ufSession.GetType().GetProperty("UI");
+            if (uiProperty != null)
+            {
+                var uiObject = uiProperty.GetValue(ufSession);
+                if (uiObject != null)
+                {
+                    var askMethod = uiObject.GetType().GetMethod("AskSuppressDialogs");
+                    if (askMethod != null)
+                    {
+                        var parameters = new object[] { originalSuppressMode };
+                        askMethod.Invoke(uiObject, parameters);
+                        originalSuppressMode = (int)parameters[0];
+
+                        var setMethod = uiObject.GetType().GetMethod("SetSuppressDialogs");
+                        if (setMethod != null)
+                        {
+                            var flagField = typeof(UFConstants).GetField("UF_UI_SUPPRESS_READONLY_WARNING");
+                            int suppressFlag = 1;
+                            if (flagField != null)
+                            {
+                                suppressFlag = (int)flagField.GetValue(null);
+                            }
+                            setMethod.Invoke(uiObject, new object[] { suppressFlag });
+                            suppressEnabled = true;
+                        }
+                    }
+                }
+            }
+        }
+        catch { }
+
         // 开始深度优先遍历，初始层级为0
         try
         {
@@ -78,6 +114,28 @@ public class AssemblyTraverser
         }
         finally
         {
+            // 恢复原始对话框抑制模式
+            if (suppressEnabled)
+            {
+                try
+                {
+                    var uiProperty = ufSession.GetType().GetProperty("UI");
+                    if (uiProperty != null)
+                    {
+                        var uiObject = uiProperty.GetValue(ufSession);
+                        if (uiObject != null)
+                        {
+                            var setMethod = uiObject.GetType().GetMethod("SetSuppressDialogs");
+                            if (setMethod != null)
+                            {
+                                setMethod.Invoke(uiObject, new object[] { originalSuppressMode });
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
             // 关闭所有事务处理器（如CSV文件等资源）
             foreach (var handler in _transactionHandlers)
             {
