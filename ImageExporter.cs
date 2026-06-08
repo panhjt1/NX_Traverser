@@ -2,6 +2,7 @@ using System;
 using NXOpen;
 using NXOpen.Assemblies;
 using NXOpen.Preferences;
+using NXOpen.UF;
 
 /// <summary>
 /// 截图导出事务类 - 负责将部件从多个视角截图导出为PNG
@@ -48,9 +49,17 @@ public class ImageExporter : ITransactionHandler
 
         // 保存原始显示部件，用于事后恢复
         Part originalDisplayPart = theSession.Parts.Display;
+        
+        // 保存原始对话框抑制状态
+        int originalSuppressMode = 0;
+        bool suppressInitialized = false;
 
         try
         {
+            // 在 SetDisplay 之前设置只读警告抑制
+            originalSuppressMode = SuppressReadonlyWarning();
+            suppressInitialized = true;
+
             // 将当前零件设为显示部件
             PartLoadStatus loadStatus;
             theSession.Parts.SetDisplay(part, false, false, out loadStatus);
@@ -87,10 +96,74 @@ public class ImageExporter : ITransactionHandler
             {
                 try
                 {
-                    theSession.Parts.SetDisplay(originalDisplayPart, false, false, out PartLoadStatus restoreStatus);
+                    // 恢复显示部件时也需要抑制只读警告
+                    int tempMode = SuppressReadonlyWarning();
+                    try
+                    {
+                        theSession.Parts.SetDisplay(originalDisplayPart, false, false, out PartLoadStatus restoreStatus);
+                    }
+                    finally
+                    {
+                        RestoreSuppressMode(tempMode);
+                    }
                 }
                 catch { /* 忽略恢复错误 */ }
             }
+            
+            // 恢复原始对话框抑制状态
+            if (suppressInitialized)
+            {
+                RestoreSuppressMode(originalSuppressMode);
+            }
+        }
+    }
+    
+    /// <summary>
+    /// 抑制只读警告对话框
+    /// </summary>
+    /// <returns>原始抑制模式值，用于恢复</returns>
+    private int SuppressReadonlyWarning()
+    {
+        int originalMode = 0;
+        
+        try
+        {
+            var ufSession = UFSession.GetUFSession();
+            
+            // 获取当前抑制模式
+            ufSession.UI.AskSuppressDialogs(out originalMode);
+            
+            // 设置所有对话框抑制
+            // 使用 UF_UI_SUPPRESS_ALL_DIALOGS 以完全抑制只读部件对话框
+            var flagField = typeof(UFConstants).GetField("UF_UI_SUPPRESS_ALL_DIALOGS");
+            if (flagField != null)
+            {
+                int suppressFlag = (int)flagField.GetValue(null);
+                ufSession.UI.SetSuppressDialogs(suppressFlag);
+            }
+        }
+        catch
+        {
+            // 如果调用失败，保持原始模式不变
+        }
+        
+        return originalMode;
+    }
+    
+    /// <summary>
+    /// 恢复对话框抑制模式
+    /// </summary>
+    /// <param name="originalMode">原始模式值</param>
+    private void RestoreSuppressMode(int originalMode)
+    {
+        try
+        {
+            var ufSession = UFSession.GetUFSession();
+            ufSession.UI.SetSuppressDialogs(originalMode);
+        }
+        catch
+        {
+            // 忽略恢复错误
         }
     }
 
