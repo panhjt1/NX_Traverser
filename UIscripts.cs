@@ -58,6 +58,9 @@ public class ClassLibrary1
     private NXOpen.BlockStyler.Toggle flagXYZOn;// Block type: Toggle
     private NXOpen.BlockStyler.Enumeration coordinateSelection;// Block type: Enumeration
     
+    // 保存配置，等对话框关闭后执行
+    private static TraversalConfig savedConfig = null;
+    
     //------------------------------------------------------------------------------
     //Constructor for NX Styler class
     //------------------------------------------------------------------------------
@@ -114,6 +117,12 @@ public class ClassLibrary1
             theClassLibrary1 = new ClassLibrary1();
             // The following method shows the dialog immediately
             theClassLibrary1.Show();
+            
+            // 等对话框关闭后，检查是否有保存的配置需要执行
+            if (savedConfig != null)
+            {
+                AssemblyTraverser.Run(savedConfig);
+            }
         }
         catch (Exception ex)
         {
@@ -259,15 +268,85 @@ public class ClassLibrary1
         int errorCode = 0;
         try
         {
-            //---- Enter your callback code here -----
+            TraversalConfig config = new TraversalConfig();
+            
+            config.filePath = filePath.Path;
+            
+            // 通过 theDialog.GetBlockProperties 获取控件属性值
+            // MultilineString 的 Value 是 string[] 类型
+            PropertyList nameProps = theDialog.GetBlockProperties("namePatterns");
+            string[] nameLines = nameProps.GetStrings("Value");
+            config.namePatterns = nameLines ?? new string[0];
+            
+            // IDPattern 的 Value 是 string[] 类型
+            PropertyList idProps = theDialog.GetBlockProperties("IDPattern");
+            string[] idLines = idProps.GetStrings("Value");
+            config.idPatterns = idLines ?? new string[0];
+            
+            // Toggle 的 Value 是 bool 类型
+            PropertyList flagImageProps = theDialog.GetBlockProperties("flagImageOn");
+            config.flagImageOn = flagImageProps.GetLogical("Value");
+            
+            PropertyList flagXYZProps = theDialog.GetBlockProperties("flagXYZOn");
+            config.flagXYZOn = flagXYZProps.GetLogical("Value");
+            
+            if (config.flagImageOn)
+            {
+                PropertyList viewProps = theDialog.GetBlockProperties("viewList");
+                string[] allItems = viewProps.GetStrings("ListItems");
+                int[] selectedIndexes = viewProps.GetIntegerVector("SelectedItems");
+                if (allItems != null && selectedIndexes != null)
+                {
+                    System.Collections.Generic.List<ImageExporter.SnapViewType> views = 
+                        new System.Collections.Generic.List<ImageExporter.SnapViewType>();
+                    foreach (int index in selectedIndexes)
+                    {
+                        if (index >= 0 && index < allItems.Length)
+                        {
+                            if (System.Enum.TryParse<ImageExporter.SnapViewType>(allItems[index], out var viewType))
+                            {
+                                views.Add(viewType);
+                            }
+                        }
+                    }
+                    config.viewList = views.ToArray();
+                }
+            }
+            
+            if (config.flagXYZOn)
+            {
+                config.coordinateSelection = theDialog.GetBlockProperties("coordinateSelection").GetEnumAsString("Value") ?? "ACS";
+            }
+            
+            // 保存配置，等对话框关闭后再执行
+            savedConfig = config;
         }
         catch (Exception ex)
         {
-            //---- Enter your exception handling code here -----
             errorCode = 1;
             theUI.NXMessageBox.Show("Block Styler", NXMessageBox.DialogType.Error, ex.ToString());
         }
         return errorCode;
+    }
+    
+    private string[] ParseMultilineString(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return new string[0];
+        }
+        
+        string[] lines = text.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+        System.Collections.Generic.List<string> result = new System.Collections.Generic.List<string>();
+        foreach (string line in lines)
+        {
+            string trimmed = line.Trim();
+            if (!string.IsNullOrWhiteSpace(trimmed))
+            {
+                result.Add(trimmed);
+            }
+        }
+        return result.ToArray();
     }
     
     //------------------------------------------------------------------------------

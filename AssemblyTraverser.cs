@@ -8,32 +8,37 @@ using NXOpen.UF;
 /// </summary>
 public class AssemblyTraverser
 {
-    // ========== 配置区域：在这里修改输出路径和过滤条件 ==========
-    private static readonly string OutputFolder = @"E:\Users\pan.hejitian\Desktop\PLM\自动截图\csharp尝试\结果存放";
-    private static readonly int MaxLevel = 5; // 最大处理层数
+    private static TraversalConfig _config;
+    private static ITransactionHandler[] _transactionHandlers;
+    private static readonly int MaxLevel = 5;
 
-    // 通配符匹配模式列表（支持 * 和 ?）。如果数组为空，则所有名称均有效。
-    // 示例：new string[] { "*总成*", "????-8103020-*", "气缸*" }
-    private static readonly string[] ValidNamePatterns = new string[] { };
-
-    // ID通配符列表（支持 * 和 ?）。{"????-8103020-*"}
-    private static readonly string[] ValidIdPatterns = new string[] { };
-    // ================================================================
-
-    // 事务处理器列表 - 按顺序逐个执行（注释/取消注释来组合）
-    private static readonly ITransactionHandler[] _transactionHandlers = new ITransactionHandler[]
+    public static void Main(TraversalConfig config)
     {
-        new ImageExporter(),        // 截图事务
-        new BoundingBoxExporter(),  // 包容体尺寸事务
-    };
-    // 单事务模式示例（取消下面注释，注释上面数组）：
-    // private static readonly ITransactionHandler[] _transactionHandlers = new ITransactionHandler[] { new ImageExporter() };
-    // private static readonly ITransactionHandler[] _transactionHandlers = new ITransactionHandler[] { new BoundingBoxExporter() };
+        _config = config ?? new TraversalConfig();
+        BuildTransactionHandlers();
+        
+        InternalMain();
+    }
 
-    /// <summary>
-    /// 程序入口点
-    /// </summary>
-    public static void Main()
+    private static void BuildTransactionHandlers()
+    {
+        System.Collections.Generic.List<ITransactionHandler> handlers = 
+            new System.Collections.Generic.List<ITransactionHandler>();
+
+        if (_config.flagImageOn && _config.viewList != null && _config.viewList.Length > 0)
+        {
+            handlers.Add(new ImageExporter(_config.viewList));
+        }
+
+        if (_config.flagXYZOn)
+        {
+            handlers.Add(new BoundingBoxExporter(_config.coordinateSelection));
+        }
+
+        _transactionHandlers = handlers.ToArray();
+    }
+
+    private static void InternalMain()
     {
         // 重置停止标记
         StopForm.StopRequested = false;
@@ -61,12 +66,15 @@ public class AssemblyTraverser
         }
 
         // 确保输出目录存在
-        System.IO.Directory.CreateDirectory(OutputFolder);
+        string outputFolder = string.IsNullOrEmpty(_config.filePath) 
+            ? System.IO.Path.GetTempPath() 
+            : _config.filePath;
+        System.IO.Directory.CreateDirectory(outputFolder);
 
         // 开始深度优先遍历，初始层级为0
         try
         {
-            TraverseAssembly(rootComponent, ufSession, theSession, 0);
+            TraverseAssembly(rootComponent, ufSession, theSession, 0, outputFolder);
         }
         finally
         {
@@ -95,8 +103,14 @@ public class AssemblyTraverser
     /// <summary>
     /// 深度优先递归遍历装配结构。
     /// </summary>
-    private static void TraverseAssembly(Component comp, UFSession ufSession, Session theSession, int level)
+    private static void TraverseAssembly(Component comp, UFSession ufSession, Session theSession, int level, string outputFolder)
     {
+        // 检查组件是否仍然有效（可能因对话框关闭而变得不活动）
+        if (comp == null || comp.Tag == Tag.Null)
+        {
+            return;
+        }
+
         // ① 主动让UI线程处理消息，并检查是否已点击停止
         System.Windows.Forms.Application.DoEvents();
         if (StopForm.StopRequested) return;
@@ -145,14 +159,14 @@ public class AssemblyTraverser
         }
 
         // 4. 检查两个通配符列表是否有配置
-        bool hasNameFilter = ValidNamePatterns.Length > 0;
-        bool hasIdFilter = ValidIdPatterns.Length > 0;
+        bool hasNameFilter = _config.namePatterns != null && _config.namePatterns.Length > 0;
+        bool hasIdFilter = _config.idPatterns != null && _config.idPatterns.Length > 0;
 
         // 5. 名称匹配（如果有名称过滤）
-        bool nameMatched = hasNameFilter && AssemblyTraverserUtils.IsMatching(compName, ValidNamePatterns);
+        bool nameMatched = hasNameFilter && AssemblyTraverserUtils.IsMatching(compName, _config.namePatterns);
 
         // 6. ID匹配（如果有ID过滤）
-        bool idMatched = hasIdFilter && AssemblyTraverserUtils.IsMatching(compId, ValidIdPatterns);
+        bool idMatched = hasIdFilter && AssemblyTraverserUtils.IsMatching(compId, _config.idPatterns);
 
         // 7. 决策标志（纯布尔逻辑）
         // 处理条件：名称或ID匹配，或者没有筛选条件且当前是叶子节点
@@ -177,7 +191,7 @@ public class AssemblyTraverser
             // 调用所有事务处理器，按顺序逐个执行
             foreach (var handler in _transactionHandlers)
             {
-                handler.Process(comp, theSession, OutputFolder, compId + "_" + compName);
+                handler.Process(comp, theSession, outputFolder, compId + "_" + compName);
             }
         }
         else if (shouldExpand)
@@ -186,7 +200,10 @@ public class AssemblyTraverser
                 new string(' ', level * 2), compId, compName, compId));
             foreach (Component child in children)
             {
-                TraverseAssembly(child, ufSession, theSession, level + 1);
+                if (child != null && child.Tag != Tag.Null)
+                {
+                    TraverseAssembly(child, ufSession, theSession, level + 1, outputFolder);
+                }
             }
         }
         else
