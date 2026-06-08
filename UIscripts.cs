@@ -265,15 +265,21 @@ public class ClassLibrary1
             
             // 通过 theDialog.GetBlockProperties 获取控件属性值
             // MultilineString 的 Value 是 string[] 类型
-            string[] nameLines = theDialog.GetBlockProperties("namePatterns").GetStrings("Value");
+            PropertyList nameProps = theDialog.GetBlockProperties("namePatterns");
+            string[] nameLines = nameProps.GetStrings("Value");
             config.namePatterns = nameLines ?? new string[0];
             
-            string[] idLines = theDialog.GetBlockProperties("IDPattern").GetStrings("Value");
+            // IDPattern 的 Value 是 string[] 类型
+            PropertyList idProps = theDialog.GetBlockProperties("IDPattern");
+            string[] idLines = idProps.GetStrings("Value");
             config.idPatterns = idLines ?? new string[0];
             
-            // Toggle 的 Value 是 int 类型 (0/1)
-            config.flagImageOn = theDialog.GetBlockProperties("flagImageOn").GetInteger("Value") != 0;
-            config.flagXYZOn = theDialog.GetBlockProperties("flagXYZOn").GetInteger("Value") != 0;
+            // Toggle 的 Value 是 bool 类型
+            PropertyList flagImageProps = theDialog.GetBlockProperties("flagImageOn");
+            config.flagImageOn = flagImageProps.GetLogical("Value");
+            
+            PropertyList flagXYZProps = theDialog.GetBlockProperties("flagXYZOn");
+            config.flagXYZOn = flagXYZProps.GetLogical("Value");
             
             if (config.flagImageOn)
             {
