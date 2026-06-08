@@ -1,0 +1,18 @@
+# Trae IDE workspace files
+.trae/
+
+# Build outputs
+bin/
+obj/
+*.dll
+*.pdb
+*.dlx
+
+# Visual Studio files
+.vs/
+*.suo
+*.user
+
+# OS files
+.DS_Store
+Thumbs.db
