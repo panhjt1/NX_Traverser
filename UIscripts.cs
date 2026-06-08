@@ -263,29 +263,29 @@ public class ClassLibrary1
             
             config.filePath = filePath.Path;
             
-            PropertyList nameProps = namePatterns.GetProperties();
-            string nameText = nameProps.GetString("Text");
+            // 通过 theDialog.GetBlockProperties 获取控件属性值
+            string nameText = theDialog.GetBlockProperties("namePatterns").GetString("Value");
             config.namePatterns = string.IsNullOrWhiteSpace(nameText) 
                 ? new string[0] 
                 : nameText.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
             
-            PropertyList idProps = IDPattern.GetProperties();
-            string idText = idProps.GetString("Text");
+            string idText = theDialog.GetBlockProperties("IDPattern").GetString("Value");
             config.idPatterns = string.IsNullOrWhiteSpace(idText) 
                 ? new string[0] 
                 : idText.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
             
-            config.flagImageOn = flagImageOn.GetProperties().GetLogical("Value");
+            config.flagImageOn = theDialog.GetBlockProperties("flagImageOn").GetLogical("Value");
+            config.flagXYZOn = theDialog.GetBlockProperties("flagXYZOn").GetLogical("Value");
             
-            if (config.flagImageOn && viewList != null)
+            if (config.flagImageOn)
             {
-                PropertyList viewProps = viewList.GetProperties();
+                PropertyList viewProps = theDialog.GetBlockProperties("viewList");
                 string[] allItems = viewProps.GetStrings("ListItems");
                 int[] selectedIndexes = viewProps.GetIntegerVector("SelectedItems");
-                System.Collections.Generic.List<ImageExporter.SnapViewType> views = 
-                    new System.Collections.Generic.List<ImageExporter.SnapViewType>();
-                if (selectedIndexes != null)
+                if (allItems != null && selectedIndexes != null)
                 {
+                    System.Collections.Generic.List<ImageExporter.SnapViewType> views = 
+                        new System.Collections.Generic.List<ImageExporter.SnapViewType>();
                     foreach (int index in selectedIndexes)
                     {
                         if (index >= 0 && index < allItems.Length)
@@ -296,16 +296,13 @@ public class ClassLibrary1
                             }
                         }
                     }
+                    config.viewList = views.ToArray();
                 }
-                config.viewList = views.ToArray();
             }
             
-            config.flagXYZOn = flagXYZOn.GetProperties().GetLogical("Value");
-            
-            if (config.flagXYZOn && coordinateSelection != null)
+            if (config.flagXYZOn)
             {
-                PropertyList coordProps = coordinateSelection.GetProperties();
-                config.coordinateSelection = coordProps.GetString("Value") ?? "ACS";
+                config.coordinateSelection = theDialog.GetBlockProperties("coordinateSelection").GetString("Value") ?? "ACS";
             }
             
             AssemblyTraverser.Run(config);
