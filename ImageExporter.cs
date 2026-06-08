@@ -49,9 +49,15 @@ public class ImageExporter : ITransactionHandler
 
         // 保存原始显示部件，用于事后恢复
         Part originalDisplayPart = theSession.Parts.Display;
+        
+        // 获取 UF session 用于抑制显示更新
+        var ufSession = UFSession.GetUFSession();
 
         try
         {
+            // 抑制显示更新，避免弹窗警告
+            ufSession.Disp.SetDisplay(UFConstants.UF_DISP_SUPPRESS_DISPLAY);
+            
             // 将当前零件设为显示部件
             PartLoadStatus loadStatus;
             theSession.Parts.SetDisplay(part, false, false, out loadStatus);
@@ -92,6 +98,14 @@ public class ImageExporter : ITransactionHandler
                 }
                 catch { /* 忽略恢复错误 */ }
             }
+            
+            // 恢复显示更新
+            try
+            {
+                ufSession.Disp.SetDisplay(UFConstants.UF_DISP_UNSUPPRESS_DISPLAY);
+                ufSession.Disp.RegenerateDisplay();
+            }
+            catch { /* 忽略恢复错误 */ }
         }
     }
     
