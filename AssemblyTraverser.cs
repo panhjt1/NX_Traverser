@@ -95,7 +95,7 @@ public class AssemblyTraverser
             {
                 try
                 {
-                    ufSession.Ui.UnlockUgAccess();
+                    ufSession.Ui.UnlockUgAccess(UFConstants.UF_UI_FROM_CUSTOM);
                 }
                 catch { }
             }
