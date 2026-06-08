@@ -121,7 +121,7 @@ public class ClassLibrary1
             // 等对话框关闭后，检查是否有保存的配置需要执行
             if (savedConfig != null)
             {
-                AssemblyTraverser.Main(savedConfig);
+                AssemblyTraverser.Run(savedConfig);
             }
         }
         catch (Exception ex)
