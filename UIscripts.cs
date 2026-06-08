@@ -275,19 +275,21 @@ public class ClassLibrary1
             
             if (config.flagImageOn && viewList != null)
             {
-                var selectedItems = viewList.GetSelectedItems();
                 PropertyList viewProps = viewList.GetProperties();
                 string[] allItems = viewProps.GetStrings("ListItems");
+                int[] selectedIndexes = viewProps.GetIntegerVector("SelectedItems");
                 System.Collections.Generic.List<ImageExporter.SnapViewType> views = 
                     new System.Collections.Generic.List<ImageExporter.SnapViewType>();
-                foreach (var item in selectedItems)
+                if (selectedIndexes != null)
                 {
-                    int index = item.Index;
-                    if (index >= 0 && index < allItems.Length)
+                    foreach (int index in selectedIndexes)
                     {
-                        if (System.Enum.TryParse<ImageExporter.SnapViewType>(allItems[index], out var viewType))
+                        if (index >= 0 && index < allItems.Length)
                         {
-                            views.Add(viewType);
+                            if (System.Enum.TryParse<ImageExporter.SnapViewType>(allItems[index], out var viewType))
+                            {
+                                views.Add(viewType);
+                            }
                         }
                     }
                 }
