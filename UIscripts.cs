@@ -309,7 +309,11 @@ public class ClassLibrary1
                 config.coordinateSelection = theDialog.GetBlockProperties("coordinateSelection").GetEnumAsString("Value") ?? "ACS";
             }
             
-            AssemblyTraverser.Main(config);
+            // 关键：先关闭对话框，再执行遍历，避免 UI 状态干扰
+            theDialog.Hide();
+            
+            // 在对话框隐藏后执行遍历，与直接调用 DLL 行为一致
+            AssemblyTraverser.Run(config);
         }
         catch (Exception ex)
         {
