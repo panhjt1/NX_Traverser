@@ -58,6 +58,9 @@ public class ClassLibrary1
     private NXOpen.BlockStyler.Toggle flagXYZOn;// Block type: Toggle
     private NXOpen.BlockStyler.Enumeration coordinateSelection;// Block type: Enumeration
     
+    // 保存配置，等对话框关闭后执行
+    private static TraversalConfig savedConfig = null;
+    
     //------------------------------------------------------------------------------
     //Constructor for NX Styler class
     //------------------------------------------------------------------------------
@@ -114,6 +117,12 @@ public class ClassLibrary1
             theClassLibrary1 = new ClassLibrary1();
             // The following method shows the dialog immediately
             theClassLibrary1.Show();
+            
+            // 等对话框关闭后，检查是否有保存的配置需要执行
+            if (savedConfig != null)
+            {
+                AssemblyTraverser.Run(savedConfig);
+            }
         }
         catch (Exception ex)
         {
@@ -309,8 +318,8 @@ public class ClassLibrary1
                 config.coordinateSelection = theDialog.GetBlockProperties("coordinateSelection").GetEnumAsString("Value") ?? "ACS";
             }
             
-            // 执行遍历
-            AssemblyTraverser.Run(config);
+            // 保存配置，等对话框关闭后再执行
+            savedConfig = config;
         }
         catch (Exception ex)
         {
