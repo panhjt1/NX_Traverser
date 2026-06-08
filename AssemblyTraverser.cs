@@ -12,7 +12,7 @@ public class AssemblyTraverser
     private static ITransactionHandler[] _transactionHandlers;
     private static readonly int MaxLevel = 5;
 
-    public static void Run(TraversalConfig config)
+    public static void Main(TraversalConfig config)
     {
         _config = config ?? new TraversalConfig();
         BuildTransactionHandlers();
