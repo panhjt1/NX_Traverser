@@ -71,18 +71,6 @@ public class AssemblyTraverser
             : _config.filePath;
         System.IO.Directory.CreateDirectory(outputFolder);
 
-        // 开始遍历前锁定 NX UI 以抑制只读对话框
-        bool locked = false;
-        try
-        {
-            int lockStatus = ufSession.Ui.LockUgAccess(UFConstants.UF_UI_FROM_CUSTOM);
-            if (lockStatus == 0) // 0 = UF_UI_SUCCESS
-            {
-                locked = true;
-            }
-        }
-        catch { }
-
         // 开始深度优先遍历，初始层级为0
         try
         {
@@ -90,16 +78,6 @@ public class AssemblyTraverser
         }
         finally
         {
-            // 恢复 NX UI 锁定状态
-            if (locked)
-            {
-                try
-                {
-                    ufSession.Ui.UnlockUgAccess(UFConstants.UF_UI_FROM_CUSTOM);
-                }
-                catch { }
-            }
-
             // 关闭所有事务处理器（如CSV文件等资源）
             foreach (var handler in _transactionHandlers)
             {
