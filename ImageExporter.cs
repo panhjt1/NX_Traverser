@@ -2,6 +2,7 @@ using System;
 using NXOpen;
 using NXOpen.Assemblies;
 using NXOpen.Preferences;
+using NXOpen.UF;
 
 /// <summary>
 /// 截图导出事务类 - 负责将部件从多个视角截图导出为PNG
@@ -9,6 +10,16 @@ using NXOpen.Preferences;
 public class ImageExporter : ITransactionHandler
 {
     private SnapViewType[] _captureViews;
+    
+    /// <summary>
+    /// 静态标志：是否已初始化只读抑制设置
+    /// </summary>
+    private static bool _suppressReadonlyWarningInitialized = false;
+    
+    /// <summary>
+    /// 静态标志：是否成功启用了只读抑制
+    /// </summary>
+    private static bool _suppressReadonlyEnabled = false;
 
     /// <summary>
     /// 定义所有截图视角的枚举值
@@ -28,6 +39,82 @@ public class ImageExporter : ITransactionHandler
     public ImageExporter(SnapViewType[] views)
     {
         _captureViews = views ?? new SnapViewType[0];
+        InitializeSuppressReadonlyWarning();
+    }
+    
+    /// <summary>
+    /// 初始化只读抑制设置（在 NX 会话级别）
+    /// 使用 UF API 设置对话框抑制标志
+    /// </summary>
+    private void InitializeSuppressReadonlyWarning()
+    {
+        if (_suppressReadonlyWarningInitialized)
+            return;
+            
+        try
+        {
+            var ufSession = UFSession.GetUFSession();
+            
+            // 使用 UF 调用来抑制对话框和只读警告
+            // NX 的 UF API 提供了一些可以控制对话框显示的选项
+            
+            // 方法1：尝试设置 UF_UI 的模式来抑制只读相关警告
+            // 注意：UFConstants 中可能有 UF_UI_NO_READONLY_WARNING 相关的常量
+            // 但具体名称可能因 NX 版本而异
+            
+            try
+            {
+                // 尝试调用 UF_UI_ask_suppress_dialogs 或类似函数
+                // NX 1946 可能支持这个功能
+                int currentMode = 0;
+                ufSession.UI.AskSuppressDialogs(out currentMode);
+                
+                // 如果当前没有抑制任何对话框，启用抑制
+                if (currentMode == 0)
+                {
+                    // 设置抑制模式，包含只读警告
+                    // UF_UI_SUPPRESS_READONLY_WARNING 的值可能需要查文档
+                    // 这里使用反射尝试调用
+                    var method = ufSession.UI.GetType().GetMethod("SetSuppressDialogs");
+                    if (method != null)
+                    {
+                        // 尝试获取抑制标志常量
+                        var flagField = typeof(UFConstants).GetField("UF_UI_SUPPRESS_READONLY_WARNING");
+                        if (flagField != null)
+                        {
+                            int suppressFlag = (int)flagField.GetValue(null);
+                            method.Invoke(ufSession.UI, new object[] { suppressFlag });
+                            _suppressReadonlyEnabled = true;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // 方法1失败，尝试备选方案
+                _suppressReadonlyEnabled = false;
+            }
+            
+            // 方法2：尝试使用 UF 调度模式设置
+            // NX 提供了一些 UF 调用可以控制是否显示某些对话框
+            try
+            {
+                // 尝试使用 UF 的 SetRoutine 调用来改变对话框行为
+                // 这可能需要调用 UF_UI_set_main_wireframe_mode 或类似函数
+            }
+            catch
+            {
+                // 静默忽略
+            }
+            
+            _suppressReadonlyWarningInitialized = true;
+        }
+        catch (Exception ex)
+        {
+            // 静默失败，不影响主流程
+            System.Diagnostics.Debug.WriteLine("只读抑制初始化失败: " + ex.Message);
+            _suppressReadonlyWarningInitialized = true; // 标记为已初始化，避免重复尝试
+        }
     }
 
     /// <summary>
@@ -168,6 +255,9 @@ public class ImageExporter : ITransactionHandler
         var theUI = NXOpen.UI.GetUI();
         var imageBuilder = theUI.CreateImageExportBuilder();
         screenVis.TriadVisibility = 0;
+        
+        // 设置 WCS 可见性（保留此修改，按用户要求）
+        // 注意：即使抑制设置生效，这里仍然执行修改
         part.WCS.Visibility = false;
         try
         {

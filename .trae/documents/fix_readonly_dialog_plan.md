@@ -3,49 +3,33 @@
 ## 问题描述
 使用 UI Styler 运行时，每个只读部件都会弹出 "该部件是只读的" 提示窗口，打断自动化执行。
 
-## 问题根源（已找到！）
-在 **ImageExporter.cs** 中，这两行代码对只读部件有问题：
-```csharp
-part.WCS.Visibility = false;
-part.WCS.Visibility = true;
-```
-对于只读部件，修改 `WCS.Visibility` 属性会触发只读警告对话框！
+## 问题根源
+在 **ImageExporter.cs** 中，修改只读部件的 `WCS.Visibility` 属性会触发只读警告对话框。
 
-## 分析：为什么无 UI 时没问题？
-原始代码同样有这个问题，但可能是 UI 运行方式让 NX 的警告对话框显示行为不同。
+## 用户要求
+1. 保留 `WCS.Visibility` 修改
+2. 不修改主遍历程序 AssemblyTraverser.cs
+3. 只在业务类（ImageExporter.cs）内部解决
 
 ## 解决方案
 
-### 核心思路
-避免在只读部件上直接修改 `WCS.Visibility`，改用其他方式或临时抑制警告。
+### 方案：在 ImageExporter 中设置会话级别的只读抑制选项
 
-### 修改文件
-1. **AssemblyTraverser.cs** - 在程序开始和结束处添加会话设置
-2. **ImageExporter.cs** - 避免修改只读部件属性
-3. **BoundingBoxExporter.cs** - 优化部件加载和关闭逻辑
+在 ImageExporter 构造函数或 Process 方法开头，通过 NX 会话选项设置只读抑制。
 
 ### 具体修改
 
-#### 1. AssemblyTraverser.cs 修改
-- 在 `InternalMain()` 开头：
-  - 保存当前会话设置
-  - 抑制只读警告对话框
-  - 禁用自动保存提示
-- 在 `finally` 块中恢复所有设置
+#### ImageExporter.cs 修改
 
-#### 2. ImageExporter.cs 修改
-- 移除或替换 `WCS.Visibility` 的修改
-- 使用更安全的方式处理视图设置
+1. **在构造函数中添加会话设置**：
+   - 在类级别添加静态标志位，确保只设置一次
+   - 使用 `Session.SetUserFunction()` 或 `UF` API 设置只读抑制选项
+   - 或者使用 `Part.IsModifiable` 检查后再修改
 
-#### 3. BoundingBoxExporter.cs 修改
-- 优化部件关闭参数
-- 确保不触发保存对话框
+2. **可能的 NX API 调用**：
+   - 检查 `Part.IsModifiable` 属性
+   - 使用 UF（User Function）级别的 API 可能避免对话框
+   - 设置会话的 "Suppress Part Readonly Warning" 选项
 
-## 风险分析
-| 风险 | 缓解措施 |
-|------|----------|
-| 抑制的警告可能掩盖真实问题 | 只在运行期间临时抑制，结束后恢复 |
-| 会话状态改变 | 在 finally 块中恢复所有设置 |
-
-## 验证方法
-在包含只读部件的装配中运行程序，验证无弹窗打断。
+### 待确认
+需要用户提供 NX 版本号，以便查找正确的 API 调用方式。
