@@ -67,12 +67,7 @@ public class ClassLibrary1
         {
             theSession = Session.GetSession();
             theUI = UI.GetUI();
-            
-            // 使用 DLL 所在目录定位 .dlx 文件
-            string dllPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-            string dllDir = System.IO.Path.GetDirectoryName(dllPath);
-            theDlxFileName = System.IO.Path.Combine(dllDir, "ClassLibrary1.dlx");
-            
+            theDlxFileName = "ClassLibrary1.dlx";
             theDialog = theUI.CreateDialog(theDlxFileName);
             theDialog.AddApplyHandler(new NXOpen.BlockStyler.BlockDialog.Apply(apply_cb));
             theDialog.AddOkHandler(new NXOpen.BlockStyler.BlockDialog.Ok(ok_cb));
