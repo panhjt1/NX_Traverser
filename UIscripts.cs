@@ -293,7 +293,7 @@ public class ClassLibrary1
                 config.coordinateSelection = coordinateSelection.Value;
             }
             
-            AssemblyTraverser.Main(config);
+            AssemblyTraverser.Run(config);
         }
         catch (Exception ex)
         {
