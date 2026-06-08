@@ -135,20 +135,12 @@ public class ImageExporter : ITransactionHandler
 
         // 保存原始显示部件，用于事后恢复
         Part originalDisplayPart = theSession.Parts.Display;
-        
-        // 保存原始对话框抑制状态
-        int originalSuppressMode = 0;
-        bool suppressInitialized = false;
 
         try
         {
-            // 在 SetDisplay 之前设置只读警告抑制
-            originalSuppressMode = SuppressReadonlyWarning();
-            suppressInitialized = true;
-
-            // 将当前零件设为显示部件
+            // 将当前零件设为显示部件，修改第三个参数为 true
             PartLoadStatus loadStatus;
-            theSession.Parts.SetDisplay(part, false, false, out loadStatus);
+            theSession.Parts.SetDisplay(part, false, true, out loadStatus);
 
             // 使用传入的友好名称作为基础文件名，并清理非法字符
             string baseName = descriptiveName;
@@ -182,108 +174,14 @@ public class ImageExporter : ITransactionHandler
             {
                 try
                 {
-                    // 恢复显示部件时也需要抑制只读警告
-                    int tempMode = SuppressReadonlyWarning();
-                    try
-                    {
-                        theSession.Parts.SetDisplay(originalDisplayPart, false, false, out PartLoadStatus restoreStatus);
-                    }
-                    finally
-                    {
-                        RestoreSuppressMode(tempMode);
-                    }
+                    theSession.Parts.SetDisplay(originalDisplayPart, false, true, out PartLoadStatus restoreStatus);
                 }
                 catch { /* 忽略恢复错误 */ }
             }
-            
-            // 恢复原始对话框抑制状态
-            if (suppressInitialized)
-            {
-                RestoreSuppressMode(originalSuppressMode);
-            }
         }
     }
     
-    /// <summary>
-    /// 抑制只读警告对话框
-    /// </summary>
-    /// <returns>原始抑制模式值，用于恢复</returns>
-    private int SuppressReadonlyWarning()
-    {
-        int originalMode = 0;
-        
-        try
-        {
-            var ufSession = UFSession.GetUFSession();
-            
-            // 使用反射查找 UI 相关的属性和方法
-            var uiProperty = ufSession.GetType().GetProperty("UI");
-            if (uiProperty != null)
-            {
-                var uiObject = uiProperty.GetValue(ufSession);
-                if (uiObject != null)
-                {
-                    var askMethod = uiObject.GetType().GetMethod("AskSuppressDialogs");
-                    if (askMethod != null)
-                    {
-                        var parameters = new object[] { originalMode };
-                        askMethod.Invoke(uiObject, parameters);
-                        originalMode = (int)parameters[0];
-                        
-                        var setMethod = uiObject.GetType().GetMethod("SetSuppressDialogs");
-                        if (setMethod != null)
-                        {
-                            // 尝试获取 UF_UI_SUPPRESS_ALL_DIALOGS 常量
-                            var flagField = typeof(UFConstants).GetField("UF_UI_SUPPRESS_ALL_DIALOGS");
-                            int suppressFlag = 1; // 默认值
-                            if (flagField != null)
-                            {
-                                suppressFlag = (int)flagField.GetValue(null);
-                            }
-                            setMethod.Invoke(uiObject, new object[] { suppressFlag });
-                        }
-                    }
-                }
-            }
-        }
-        catch
-        {
-            // 如果调用失败，保持原始模式不变
-        }
-        
-        return originalMode;
-    }
-    
-    /// <summary>
-    /// 恢复对话框抑制模式
-    /// </summary>
-    /// <param name="originalMode">原始模式值</param>
-    private void RestoreSuppressMode(int originalMode)
-    {
-        try
-        {
-            var ufSession = UFSession.GetUFSession();
-            
-            // 使用反射查找 UI 相关的属性和方法
-            var uiProperty = ufSession.GetType().GetProperty("UI");
-            if (uiProperty != null)
-            {
-                var uiObject = uiProperty.GetValue(ufSession);
-                if (uiObject != null)
-                {
-                    var setMethod = uiObject.GetType().GetMethod("SetSuppressDialogs");
-                    if (setMethod != null)
-                    {
-                        setMethod.Invoke(uiObject, new object[] { originalMode });
-                    }
-                }
-            }
-        }
-        catch
-        {
-            // 忽略恢复错误
-        }
-    }
+
 
     /// <summary>
     /// 事务结束后的资源清理（截图事务无需释放资源）
