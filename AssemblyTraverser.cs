@@ -105,6 +105,12 @@ public class AssemblyTraverser
     /// </summary>
     private static void TraverseAssembly(Component comp, UFSession ufSession, Session theSession, int level, string outputFolder)
     {
+        // 检查组件是否仍然有效（可能因对话框关闭而变得不活动）
+        if (comp == null || comp.Tag == Tag.Null)
+        {
+            return;
+        }
+
         // ① 主动让UI线程处理消息，并检查是否已点击停止
         System.Windows.Forms.Application.DoEvents();
         if (StopForm.StopRequested) return;
