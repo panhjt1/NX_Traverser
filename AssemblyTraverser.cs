@@ -71,25 +71,14 @@ public class AssemblyTraverser
             : _config.filePath;
         System.IO.Directory.CreateDirectory(outputFolder);
 
-        // 开始遍历前全局抑制只读对话框
-        int originalSuppressMode = 0;
-        bool suppressEnabled = false;
+        // 开始遍历前锁定 NX UI 以抑制只读对话框
+        bool locked = false;
         try
         {
-            // 使用 UFSession.Ui (小写i) 获取 UI 接口
-            var ui = ufSession.Ui;
-            if (ui != null)
+            int lockStatus = ufSession.Ui.LockUgAccess(UFConstants.UF_UI_FROM_CUSTOM);
+            if (lockStatus == 0) // 0 = UF_UI_SUCCESS
             {
-                ui.AskSuppressDialogs(out originalSuppressMode);
-
-                var flagField = typeof(UFConstants).GetField("UF_UI_SUPPRESS_READONLY_WARNING");
-                int suppressFlag = 1;
-                if (flagField != null)
-                {
-                    suppressFlag = (int)flagField.GetValue(null);
-                }
-                ui.SetSuppressDialogs(suppressFlag);
-                suppressEnabled = true;
+                locked = true;
             }
         }
         catch { }
@@ -101,12 +90,12 @@ public class AssemblyTraverser
         }
         finally
         {
-            // 恢复原始对话框抑制模式
-            if (suppressEnabled)
+            // 恢复 NX UI 锁定状态
+            if (locked)
             {
                 try
                 {
-                    ufSession.Ui.SetSuppressDialogs(originalSuppressMode);
+                    ufSession.Ui.UnlockUgAccess();
                 }
                 catch { }
             }
