@@ -76,33 +76,20 @@ public class AssemblyTraverser
         bool suppressEnabled = false;
         try
         {
-            var uiProperty = ufSession.GetType().GetProperty("UI");
-            if (uiProperty != null)
+            // 使用 UFSession.Ui (小写i) 获取 UI 接口
+            var ui = ufSession.Ui;
+            if (ui != null)
             {
-                var uiObject = uiProperty.GetValue(ufSession);
-                if (uiObject != null)
-                {
-                    var askMethod = uiObject.GetType().GetMethod("AskSuppressDialogs");
-                    if (askMethod != null)
-                    {
-                        var parameters = new object[] { originalSuppressMode };
-                        askMethod.Invoke(uiObject, parameters);
-                        originalSuppressMode = (int)parameters[0];
+                ui.AskSuppressDialogs(out originalSuppressMode);
 
-                        var setMethod = uiObject.GetType().GetMethod("SetSuppressDialogs");
-                        if (setMethod != null)
-                        {
-                            var flagField = typeof(UFConstants).GetField("UF_UI_SUPPRESS_READONLY_WARNING");
-                            int suppressFlag = 1;
-                            if (flagField != null)
-                            {
-                                suppressFlag = (int)flagField.GetValue(null);
-                            }
-                            setMethod.Invoke(uiObject, new object[] { suppressFlag });
-                            suppressEnabled = true;
-                        }
-                    }
+                var flagField = typeof(UFConstants).GetField("UF_UI_SUPPRESS_READONLY_WARNING");
+                int suppressFlag = 1;
+                if (flagField != null)
+                {
+                    suppressFlag = (int)flagField.GetValue(null);
                 }
+                ui.SetSuppressDialogs(suppressFlag);
+                suppressEnabled = true;
             }
         }
         catch { }
@@ -119,19 +106,7 @@ public class AssemblyTraverser
             {
                 try
                 {
-                    var uiProperty = ufSession.GetType().GetProperty("UI");
-                    if (uiProperty != null)
-                    {
-                        var uiObject = uiProperty.GetValue(ufSession);
-                        if (uiObject != null)
-                        {
-                            var setMethod = uiObject.GetType().GetMethod("SetSuppressDialogs");
-                            if (setMethod != null)
-                            {
-                                setMethod.Invoke(uiObject, new object[] { originalSuppressMode });
-                            }
-                        }
-                    }
+                    ufSession.Ui.SetSuppressDialogs(originalSuppressMode);
                 }
                 catch { }
             }
