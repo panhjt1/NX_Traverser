@@ -263,34 +263,43 @@ public class ClassLibrary1
             
             config.filePath = filePath.Path;
             
-            string namePatternsText = namePatterns.Value;
-            config.namePatterns = ParseMultilineString(namePatternsText);
+            PropertyList nameProps = namePatterns.GetProperties();
+            string[] nameLines = nameProps.GetStrings("String");
+            config.namePatterns = nameLines ?? new string[0];
             
-            string idPatternsText = IDPattern.Value;
-            config.idPatterns = ParseMultilineString(idPatternsText);
+            PropertyList idProps = IDPattern.GetProperties();
+            string[] idLines = idProps.GetStrings("String");
+            config.idPatterns = idLines ?? new string[0];
             
-            config.flagImageOn = flagImageOn.Value;
+            config.flagImageOn = flagImageOn.GetProperties().GetLogical("Value");
             
             if (config.flagImageOn && viewList != null)
             {
                 var selectedItems = viewList.GetSelectedItems();
+                PropertyList viewProps = viewList.GetProperties();
+                string[] allItems = viewProps.GetStrings("ListItems");
                 System.Collections.Generic.List<ImageExporter.SnapViewType> views = 
                     new System.Collections.Generic.List<ImageExporter.SnapViewType>();
                 foreach (var item in selectedItems)
                 {
-                    if (System.Enum.TryParse<ImageExporter.SnapViewType>(item.Label, out var viewType))
+                    int index = item.Index;
+                    if (index >= 0 && index < allItems.Length)
                     {
-                        views.Add(viewType);
+                        if (System.Enum.TryParse<ImageExporter.SnapViewType>(allItems[index], out var viewType))
+                        {
+                            views.Add(viewType);
+                        }
                     }
                 }
                 config.viewList = views.ToArray();
             }
             
-            config.flagXYZOn = flagXYZOn.Value;
+            config.flagXYZOn = flagXYZOn.GetProperties().GetLogical("Value");
             
             if (config.flagXYZOn && coordinateSelection != null)
             {
-                config.coordinateSelection = coordinateSelection.Value;
+                PropertyList coordProps = coordinateSelection.GetProperties();
+                config.coordinateSelection = coordProps.GetString("Value") ?? "ACS";
             }
             
             AssemblyTraverser.Run(config);
