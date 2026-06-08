@@ -36,9 +36,17 @@ public class BoundingBoxExporter : ITransactionHandler
 
         try
         {
+            // 计算实体数量
+            int bodyCount = 0;
+            BodyCollection bodies = part.Bodies;
+            foreach (Body body in bodies)
+            {
+                bodyCount++;
+            }
+
             // 检查并记录加载状态
             theSession.ListingWindow.WriteLine(string.Format("    正在处理: {0} | 完全加载={1} | 实体数={2}",
-                part.Name, part.IsFullyLoaded, part.Bodies.Count));
+                part.Name, part.IsFullyLoaded, bodyCount));
 
             // 如果不是完全加载，尝试强制加载
             if (!part.IsFullyLoaded)
@@ -47,7 +55,13 @@ public class BoundingBoxExporter : ITransactionHandler
                 try
                 {
                     part.LoadThisPartFully();
-                    theSession.ListingWindow.WriteLine(string.Format("    -> 加载完成，实体数={0}", part.Bodies.Count));
+                    // 重新计算实体数量
+                    bodyCount = 0;
+                    foreach (Body body in bodies)
+                    {
+                        bodyCount++;
+                    }
+                    theSession.ListingWindow.WriteLine(string.Format("    -> 加载完成，实体数={0}", bodyCount));
                 }
                 catch (Exception loadEx)
                 {
