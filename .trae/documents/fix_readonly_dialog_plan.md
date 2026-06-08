@@ -3,24 +3,32 @@
 ## 问题描述
 使用 UI Styler 运行时，每个只读部件都会弹出 "该部件是只读的" 提示窗口，打断自动化执行。
 
+## 分析：为什么无 UI 时没问题？
+1. UI 运行方式可能改变了 NX 会话的某些内部状态
+2. 消息处理机制在 UI 模式下可能不同
+3. 对话框上下文可能导致 NX 行为变化
+
 ## 解决方案
 
 ### 核心思路
-通过 NXOpen API 设置会话选项，抑制对话框和警告。
+通过 NXOpen API 设置会话选项，抑制对话框和警告，并保持与原始代码兼容。
 
 ### 修改文件
 1. **AssemblyTraverser.cs** - 在程序开始和结束处添加会话设置
-2. **BoundingBoxExporter.cs** - 确保部件关闭时不弹出保存提示
+2. **BoundingBoxExporter.cs** - 优化部件加载和关闭逻辑
 
 ### 具体修改
 
 #### 1. AssemblyTraverser.cs 修改
-- 在 `InternalMain()` 开头添加代码，抑制只读警告
-- 使用 `theSession.SetUndoMark()` 确保操作可以撤销
-- 恢复会话设置
+- 在 `InternalMain()` 开头：
+  - 保存当前会话设置
+  - 抑制只读警告对话框
+  - 禁用自动保存提示
+- 在 `finally` 块中恢复所有设置
 
 #### 2. BoundingBoxExporter.cs 修改
-- 优化 `Close()` 方法参数，使用更保守的关闭策略
+- 优化部件关闭参数
+- 确保不触发保存对话框
 
 ## 风险分析
 | 风险 | 缓解措施 |
