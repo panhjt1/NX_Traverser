@@ -264,18 +264,16 @@ public class ClassLibrary1
             config.filePath = filePath.Path;
             
             // 通过 theDialog.GetBlockProperties 获取控件属性值
-            string nameText = theDialog.GetBlockProperties("namePatterns").GetString("Value");
-            config.namePatterns = string.IsNullOrWhiteSpace(nameText) 
-                ? new string[0] 
-                : nameText.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            // MultilineString 的 Value 是 string[] 类型
+            string[] nameLines = theDialog.GetBlockProperties("namePatterns").GetStrings("Value");
+            config.namePatterns = nameLines ?? new string[0];
             
-            string idText = theDialog.GetBlockProperties("IDPattern").GetString("Value");
-            config.idPatterns = string.IsNullOrWhiteSpace(idText) 
-                ? new string[0] 
-                : idText.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            string[] idLines = theDialog.GetBlockProperties("IDPattern").GetStrings("Value");
+            config.idPatterns = idLines ?? new string[0];
             
-            config.flagImageOn = theDialog.GetBlockProperties("flagImageOn").GetLogical("Value");
-            config.flagXYZOn = theDialog.GetBlockProperties("flagXYZOn").GetLogical("Value");
+            // Toggle 的 Value 是 int 类型 (0/1)
+            config.flagImageOn = theDialog.GetBlockProperties("flagImageOn").GetInteger("Value") != 0;
+            config.flagXYZOn = theDialog.GetBlockProperties("flagXYZOn").GetInteger("Value") != 0;
             
             if (config.flagImageOn)
             {
@@ -302,7 +300,7 @@ public class ClassLibrary1
             
             if (config.flagXYZOn)
             {
-                config.coordinateSelection = theDialog.GetBlockProperties("coordinateSelection").GetString("Value") ?? "ACS";
+                config.coordinateSelection = theDialog.GetBlockProperties("coordinateSelection").GetEnumAsString("Value") ?? "ACS";
             }
             
             AssemblyTraverser.Run(config);
