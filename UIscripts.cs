@@ -264,12 +264,16 @@ public class ClassLibrary1
             config.filePath = filePath.Path;
             
             PropertyList nameProps = namePatterns.GetProperties();
-            string[] nameLines = nameProps.GetStrings("String");
-            config.namePatterns = nameLines ?? new string[0];
+            string nameText = nameProps.GetString("Text");
+            config.namePatterns = string.IsNullOrWhiteSpace(nameText) 
+                ? new string[0] 
+                : nameText.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
             
             PropertyList idProps = IDPattern.GetProperties();
-            string[] idLines = idProps.GetStrings("String");
-            config.idPatterns = idLines ?? new string[0];
+            string idText = idProps.GetString("Text");
+            config.idPatterns = string.IsNullOrWhiteSpace(idText) 
+                ? new string[0] 
+                : idText.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
             
             config.flagImageOn = flagImageOn.GetProperties().GetLogical("Value");
             
