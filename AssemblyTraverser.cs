@@ -12,12 +12,25 @@ public class AssemblyTraverser
     private static ITransactionHandler[] _transactionHandlers;
     private static readonly int MaxLevel = 5;
 
+    /// <summary>
+    /// 停止标记（volatile 保证多线程可见性）
+    /// </summary>
+    public static volatile bool StopRequested = false;
+
     public static void Run(TraversalConfig config)
     {
         _config = config ?? new TraversalConfig();
         BuildTransactionHandlers();
         
         InternalMain();
+    }
+
+    /// <summary>
+    /// 请求停止遍历（由外部调用，如NX对话框的停止按钮回调）
+    /// </summary>
+    public static void RequestStop()
+    {
+        StopRequested = true;
     }
 
     private static void BuildTransactionHandlers()
@@ -40,6 +53,9 @@ public class AssemblyTraverser
 
     private static void InternalMain()
     {
+        // 重置停止标记
+        StopRequested = false;
+
         var theSession = Session.GetSession();
         var ufSession = UFSession.GetUFSession();
         Part workPart = theSession.Parts.Work;
@@ -64,8 +80,8 @@ public class AssemblyTraverser
             : _config.filePath;
         System.IO.Directory.CreateDirectory(outputFolder);
 
-        // 创建NX原生"工作进行中"对话框（带停止按钮）
-        ufSession.Ui.CreateWorkingDialog("正在进行装配遍历...");
+        // 在NX状态栏显示执行状态
+        ufSession.Ui.SetStatus("正在进行装配遍历...");
 
         // 开始深度优先遍历，初始层级为0
         try
@@ -74,8 +90,8 @@ public class AssemblyTraverser
         }
         finally
         {
-            // 关闭工作进行中对话框
-            ufSession.Ui.CloseWorkingDialog();
+            // 清除状态栏
+            ufSession.Ui.SetStatus("");
 
             // 关闭所有事务处理器（如CSV文件等资源）
             foreach (var handler in _transactionHandlers)
@@ -98,14 +114,14 @@ public class AssemblyTraverser
     /// </summary>
     private static void TraverseAssembly(Component comp, UFSession ufSession, Session theSession, int level, string outputFolder)
     {
-        // 检查组件是否仍然有效（可能因对话框关闭而变得不活动）
+        // 检查组件是否仍然有效
         if (comp == null || comp.Tag == Tag.Null)
         {
             return;
         }
 
-        // 检查用户是否点击了停止按钮
-        if (ufSession.Ui.CheckBreak()) return;
+        // 检查停止标记
+        if (StopRequested) return;
 
         // 1. 按需加载当前组件（确保子件结构可见）
         try
@@ -161,7 +177,6 @@ public class AssemblyTraverser
         bool idMatched = hasIdFilter && AssemblyTraverserUtils.IsMatching(compId, _config.idPatterns);
 
         // 7. 决策标志（纯布尔逻辑）
-        // 处理条件：名称或ID匹配，或者没有筛选条件且当前是叶子节点
         bool shouldProcess = nameMatched
                              || idMatched
                              || (!hasNameFilter && !hasIdFilter && !isAssembly);
@@ -180,9 +195,13 @@ public class AssemblyTraverser
             theSession.ListingWindow.WriteLine(string.Format("{0}[Process - {1}] {2} (Name: {3}, ID: {4})",
                 new string(' ', level * 2), matchType, compId, compName, compId));
             
+            // 更新状态栏显示当前处理的组件
+            ufSession.Ui.SetStatus(string.Format("正在处理: {0}", compId));
+            
             // 调用所有事务处理器，按顺序逐个执行
             foreach (var handler in _transactionHandlers)
             {
+                if (StopRequested) return;
                 handler.Process(comp, theSession, outputFolder, compId + "_" + compName);
             }
         }
@@ -192,7 +211,7 @@ public class AssemblyTraverser
                 new string(' ', level * 2), compId, compName, compId));
             foreach (Component child in children)
             {
-                if (ufSession.Ui.CheckBreak()) return;
+                if (StopRequested) return;
                 if (child != null && child.Tag != Tag.Null)
                 {
                     TraverseAssembly(child, ufSession, theSession, level + 1, outputFolder);
@@ -201,7 +220,6 @@ public class AssemblyTraverser
         }
         else
         {
-            // 不匹配的叶子节点，且有过滤限制
             theSession.ListingWindow.WriteLine(string.Format("{0}[Skip] {1} (Name: {2}, ID: {3})",
                 new string(' ', level * 2), compId, compName, compId));
         }
