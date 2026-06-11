@@ -33,7 +33,6 @@ flowchart TD
     
     subgraph 工具层
         G[AssemblyTraverser.Utilities.cs]
-        H[StopForm.cs]
     end
     
     A -->|创建| B
@@ -44,7 +43,6 @@ flowchart TD
     D -.->|实现| F
     E -.->|实现| F
     C -->|使用| G
-    C -->|显示| H
 ```
 
 ## 执行流程
@@ -59,9 +57,9 @@ sequenceDiagram
 
     UI->>UI: 用户输入参数
     UI->>Config: new TraversalConfig(params)
-    UI->>Traverser: Main(config)
+    UI->>Traverser: Run(config)
     
-    Traverser->>Traverser: 初始化StopForm
+    Traverser->>Traverser: 重置StopRequested标记
     Traverser->>Traverser: 获取Session/WorkPart
     
     alt flagImageOn=true
@@ -97,7 +95,6 @@ sequenceDiagram
 | [BoundingBoxExporter.cs](file:///workspace/BoundingBoxExporter.cs) | 包容体尺寸导出器，支持ACS/WCS坐标系，导出CSV格式结果 |
 | [ImageExporter.cs](file:///workspace/ImageExporter.cs) | 截图导出器，支持8个标准视角的PNG截图 |
 | [ITransactionHandler.cs](file:///workspace/ITransactionHandler.cs) | 事务处理器接口，可扩展新功能 |
-| [StopForm.cs](file:///workspace/StopForm.cs) | 停止控制窗口 |
 | [TraversalConfig.cs](file:///workspace/TraversalConfig.cs) | 配置数据类，集中管理所有可配置参数 |
 | [UIscripts.cs](file:///workspace/UIscripts.cs) | UI入口，提供参数配置界面 |
 
@@ -105,9 +102,10 @@ sequenceDiagram
 
 ### 1. 装配结构遍历
 - 深度优先递归遍历装配结构树
-- 支持最大层级限制
+- 最大遍历层级：5 层（`MaxLevel` 常量）
 - 支持组件名称/ID通配符过滤
 - 自动按需加载组件
+- 支持通过 `RequestStop()` 方法中途停止遍历
 
 ### 2. 多视角截图
 - 8个标准视角：正等测、斜等测、顶、前、右、后、底、左
@@ -169,15 +167,16 @@ config.viewList = new ImageExporter.SnapViewType[] {
 config.flagXYZOn = true;
 config.coordinateSelection = "ACS";
 
-AssemblyTraverser.Main(config);
+AssemblyTraverser.Run(config);
 ```
 
 ## 错误处理与防错机制
 
 ### 运行时防错
 - **组件有效性检查**: 在遍历过程中自动检测组件对象是否仍然有效，避免"试图使用不活动的对象"错误
-- **只读部件处理**: 通过关闭对话框后再执行遍历，避免只读部件弹窗打断自动化流程
-- **空值保护**: 对关键对象和属性访问进行空值检查
+- **只读部件处理**: 通过 `ImageExporter` 中的静态抑制标志，避免只读部件弹窗打断自动化流程
+- **空值保护**: 对关键对象（WorkPart、RootComponent 等）和属性访问进行空值检查
+- **停止控制**: 提供 `StopRequested` 静态标志和 `RequestStop()` 方法，支持外部（如 UI 停止按钮）安全中断遍历
 
 ### UI输入验证
 - 保存地址为空时不允许运行
@@ -213,5 +212,6 @@ public enum SnapViewType
 
 | 版本 | 日期 | 变更说明 |
 |------|------|----------|
+| v1.2 | 2026-06 | 移除 StopForm，改用 `StopRequested`/`RequestStop()` 机制；`Main()` 重命名为 `Run()` |
 | v1.1 | 2026-06 | 添加UI界面支持，支持参数配置 |
 | v1.0 | 2026-05 | 初始版本，DLL直接执行模式 |
