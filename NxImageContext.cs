@@ -44,6 +44,7 @@ internal sealed class NxImageContext : IDisposable
             throw new InvalidOperationException("请先退出爆炸视图，以保证截图方向与原型一致。");
         _original = new NxViewState(original);
         _expanded = _display.Views.IsWorkViewExpanded();
+        LogViewState("captured");
         View = original;
         Transform = new double[,] { { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 }, { 0, 0, 0, 1 } };
         try
@@ -78,6 +79,7 @@ internal sealed class NxImageContext : IDisposable
                 if (!visible || _display.Views.WorkView.Tag != _isolateTag)
                     throw new InvalidOperationException("临时隔离视图未成为活动工作视图，已拒绝截图。");
                 EnsurePartContext();
+                LogViewState("isolated");
             });
         }
         catch { Dispose(); throw; }
@@ -89,6 +91,24 @@ internal sealed class NxImageContext : IDisposable
             throw new InvalidOperationException("隔离截图期间工作/显示部件意外变化。");
     }
 
+    private void LogViewState(string stage)
+    {
+        try
+        {
+            Layout current = _display.Layouts.Current;
+            View work = _display.Views.WorkView;
+            View[] active = _display.Views.GetActiveViews();
+            var tags = new string[active.Length];
+            for (int i = 0; i < active.Length; ++i) tags[i] = active[i].Tag.ToString();
+            RunLog.Write("[Image state] " + stage + " OriginalLayout=" + _layout.Tag +
+                " CurrentLayout=" + (current == null ? Tag.Null : current.Tag) +
+                " OriginalLayoutDisplayStatus=" + _layout.DisplayStatus +
+                " OriginalView=" + _original.Tag + " WorkView=" + (work == null ? Tag.Null : work.Tag) +
+                " ActiveViews=" + string.Join(",", tags) + " IsolateView=" + _isolateTag);
+        }
+        catch (Exception ex) { RunLog.Error("读取截图视图诊断 " + stage, ex); }
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -96,19 +116,24 @@ internal sealed class NxImageContext : IDisposable
         try
         {
             EnsurePartContext();
+            LogViewState("before restore");
             if (_createAttempted)
             {
                 RunLog.NxCall("Restore image layout", () =>
                 {
-                    // Isolate may replace a view inside the existing layout.
-                    // NX raises 925052 when Open is called on that layout again.
+                    // Current can change while Open still regards the original
+                    // layout as displayed (NX 925052). Select the saved layout
+                    // with ChangeLayout; never reopen it with Layout.Open.
                     Layout current = _display.Layouts.Current;
                     if (current == null || current.Tag != _layout.Tag)
                     {
-                        RunLog.Write("[Image restore] 切回原布局。");
-                        _layout.Open();
+                        RunLog.NxCall("ChangeLayout (restore image)", () => _display.Layouts.ChangeLayout(_layout));
+                        LogViewState("after ChangeLayout");
+                        Layout selected = _display.Layouts.Current;
+                        if (selected == null || selected.Tag != _layout.Tag)
+                            throw new InvalidOperationException("ChangeLayout 未恢复原布局，已停止。");
                     }
-                    else RunLog.Write("[Image restore] 原布局仍在显示，跳过 Open，直接恢复视图。");
+                    else RunLog.Write("[Image restore] 已是原布局，直接恢复视图。");
                     foreach (View active in _display.Views.GetActiveViews())
                     {
                         if (active.Tag != _isolateTag || active.Tag == _original.Tag) continue;
@@ -124,11 +149,14 @@ internal sealed class NxImageContext : IDisposable
                 });
             }
             _original.Restore();
-            View[] restored = _display.Views.GetActiveViews();
-            if (_display.Layouts.Current.Tag != _layout.Tag || restored.Length != 1 ||
-                restored[0].Tag != _original.Tag || _display.Views.WorkView.Tag != _original.Tag)
-                throw new InvalidOperationException("原布局/工作视图未完整恢复，已停止。");
             _session.DisplayManager.MakeUpToDate();
+            LogViewState("after restore");
+            Layout restoredLayout = _display.Layouts.Current;
+            View[] restored = _display.Views.GetActiveViews();
+            if (restoredLayout == null || restoredLayout.Tag != _layout.Tag || restored.Length != 1 ||
+                restored[0].Tag != _original.Tag || _display.Views.WorkView.Tag != _original.Tag ||
+                _display.Views.IsWorkViewExpanded() != _expanded)
+                throw new InvalidOperationException("原布局/工作视图未完整恢复，已停止。");
             RunLog.Write("[Image context restored] 原布局、视图、WCS/三重轴可见性已恢复。");
         }
         catch (Exception ex)

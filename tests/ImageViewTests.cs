@@ -82,12 +82,13 @@ internal static class ImageViewTests
             Check(failedRoot.Views.WorkView == saved && failedRoot.Views.Active[0] == saved, "Partial isolate creation is restored");
             failedRoot.ComponentAssembly.FailAfterCreate = false;
             Layout originalLayout = failedRoot.Layouts.Current;
-            failedRoot.Layouts.Current.LeaveIsolateOnOpen = true;
-            using (var context = new NxImageContext(failedSession, failedComponent))
-                failedRoot.Layouts.Current = new Layout { Owner = failedRoot, Tag = (Tag)1003, Original = saved };
+            int changedBefore = failedRoot.Layouts.ChangeCalls;
+            failedRoot.Layouts.LeaveIsolateOnChange = true;
+            using (var context = new NxImageContext(failedSession, failedComponent)) { }
             Check(failedRoot.Views.WorkView == saved && failedRoot.Views.Active[0] == saved, "Layout replacement fallback restores original view");
-            Check(failedRoot.Layouts.Current == originalLayout && originalLayout.OpenCalls == 1,
-                "A different current layout still requires opening the captured layout");
+            Check(failedRoot.Layouts.Current == originalLayout && originalLayout.OpenCalls == 0 &&
+                failedRoot.Layouts.ChangeCalls == changedBefore + 1,
+                "ChangeLayout selects the original layout without calling Open on its existing display");
 
             // Restoring a camera may fail; overlay restoration must still run.
             var state = new NxViewState(saved);
@@ -102,6 +103,7 @@ internal static class ImageViewTests
 
             Part keptRoot; Component keptComponent;
             Session keptSession = Setup(out keptRoot, out keptComponent);
+            keptRoot.ComponentAssembly.CreateSeparateLayout = false;
             // Start ownership tracking before opening the temporary target.
             keptSession.Parts.Items.Remove((BasePart)keptComponent.Prototype);
             using (var resources = new NxPartResources(keptSession))
@@ -115,6 +117,8 @@ internal static class ImageViewTests
                 Check(!((BasePart)keptComponent.Prototype).Closed, "Parts referenced by an unrestored view stay loaded");
             }
             CheckRepeatedIsolateCleanup();
+            CheckFailedLayoutChange(false);
+            CheckFailedLayoutChange(true);
             TransformChecks();
         }
         finally { Directory.Delete(output, true); }
@@ -133,14 +137,33 @@ internal static class ImageViewTests
             {
                 Part temporary = session.Add("temporary image target", PartLoadState.PartiallyLoaded);
                 component.Prototype = temporary;
+                root.ComponentAssembly.CreateSeparateLayout = i == 1;
                 using (var context = new NxImageContext(session, component)) { }
-                Check(layout.OpenCalls == 0 && layout.ReplaceCalls == i + 1,
-                    "Current layout is not opened again; isolate view is replaced on each run");
+                Check(layout.OpenCalls == 0 && layout.ReplaceCalls == 1 && root.Layouts.ChangeCalls == i,
+                    "Same-layout and separate-layout isolation both restore without Open");
                 Check(root.Views.WorkView == original && root.Views.Active[0] == original && !AssemblyTraverser.Stopped,
                     "Repeated isolation restores the original view without a false stop");
                 Check(resources.ReleaseUnused("restored isolate") && temporary.Closed && session.Parts.Items.Count == 1,
                     "Successful layout restoration permits timely temporary-part release");
             }
+        }
+    }
+    private static void CheckFailedLayoutChange(bool noOp)
+    {
+        Part root; Component component;
+        Session session = Setup(out root, out component);
+        session.Parts.Items.Remove((BasePart)component.Prototype);
+        using (var resources = new NxPartResources(session))
+        {
+            Part temporary = session.Add("failed restore target", PartLoadState.PartiallyLoaded);
+            component.Prototype = temporary;
+            var context = new NxImageContext(session, component);
+            root.Layouts.FailChange = !noOp;
+            root.Layouts.RefuseChange = noOp;
+            Fails(context.Dispose, "Failed or ineffective ChangeLayout must not report restoration success");
+            Check(AssemblyTraverser.Stopped, "Unrestored separate layout stops traversal");
+            resources.ReleaseUnused("failed layout change");
+            Check(!temporary.Closed, "Unrestored separate layout keeps its referenced parts loaded");
         }
     }
     private static void TransformChecks()
@@ -208,24 +231,39 @@ namespace NXOpen
         public Display.StudioImageCaptureBuilder CreateStudioImageCaptureBuilder()
         { return LastBuilder = new Display.StudioImageCaptureBuilder { Owner = Owner }; }
     }
-    public sealed class LayoutCollection { public Layout Current; }
+    public sealed class LayoutCollection
+    {
+        public Layout Current;
+        public bool LeaveIsolateOnChange, FailChange, RefuseChange;
+        public int ChangeCalls;
+        public void ChangeLayout(Layout layout)
+        {
+            ++ChangeCalls;
+            if (FailChange) throw new Exception("layout change failed");
+            if (RefuseChange) return;
+            Current = layout;
+            if (!LeaveIsolateOnChange) layout.Owner.Views.Active = new[] { layout.Original };
+        }
+    }
     public sealed class Layout
     {
         public Part Owner;
         public Tag Tag;
         public View Original;
-        public bool FailOpen, LeaveIsolateOnOpen, FailReplace;
+        public bool FailReplace;
+        public bool AlreadyDisplayed = true;
         public int OpenCalls, ReplaceCalls;
+        public bool DisplayStatus { get { return Owner.Layouts.Current == this; } }
         public View[] GetViews() { return new[] { Original }; }
         public void Open()
         {
             ++OpenCalls;
-            // Observed in NX 2512: Open is not idempotent for the current layout.
-            if (Owner.Layouts.Current != null && Owner.Layouts.Current.Tag == Tag)
+            // Reported NX state: the original layout rejects Open even when
+            // Layouts.Current is a different layout created by isolation.
+            if (AlreadyDisplayed)
                 throw new NXException(925052);
-            if (FailOpen) throw new Exception("layout open failed");
             Owner.Layouts.Current = this;
-            if (!LeaveIsolateOnOpen) Owner.Views.Active = new[] { Original };
+            Owner.Views.Active = new[] { Original };
         }
         public void ReplaceView(ModelingView from, ModelingView to, bool fit)
         {
@@ -254,11 +292,14 @@ namespace NXOpen.Assemblies
     {
         public Part Owner;
         public bool FailAfterCreate;
+        public bool CreateSeparateLayout = true;
         public ErrorList CreateIsolateViewWithComponents(Component[] components, out View isolated)
         {
             isolated = new ModelingView { Owner = Owner, Tag = (Tag)1002, WcsVisibility = true,
                 TriadVisibility = true, Matrix = new Matrix3x3 { Xx = 1, Yy = 1, Zz = 1 } };
             Owner.Views.Active = new[] { isolated };
+            if (CreateSeparateLayout)
+                Owner.Layouts.Current = new Layout { Owner = Owner, Tag = (Tag)1003, Original = isolated };
             return new ErrorList { Length = FailAfterCreate ? 1 : 0 };
         }
     }
