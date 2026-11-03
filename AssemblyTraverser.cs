@@ -12,7 +12,8 @@ public sealed class AssemblyTraverser
     public static volatile bool StopRequested;
     private readonly TraversalConfig _config;
     private readonly List<ITransactionHandler> _handlers = new List<ITransactionHandler>();
-    private readonly HashSet<Tag> _processed = new HashSet<Tag>();
+    private readonly HashSet<string> _processed = new HashSet<string>(StringComparer.Ordinal);
+    private NxPartResources _resources;
     private int _completed, _failed, _skipped;
 
     private AssemblyTraverser(TraversalConfig config)
@@ -53,7 +54,12 @@ public sealed class AssemblyTraverser
         {
             RunLog.Write("输出目录: " + output);
             RunLog.Write("每个匹配原型导出一次；匹配装配后不再单独导出其后代。坐标系=" + _config.coordinateSelection);
-            try { Traverse(root, rootPart.ComponentAssembly, session, 0, output); }
+            RunLog.Write("逐节点释放临时加载部件；保留原有完整加载/已修改/活动部件。原有干净部分加载部件被本次使用后可卸载。");
+            try
+            {
+                using (_resources = new NxPartResources(session))
+                    Traverse(root, rootPart.ComponentAssembly, session, 0, output);
+            }
             finally
             {
                 foreach (ITransactionHandler handler in _handlers)
@@ -72,10 +78,14 @@ public sealed class AssemblyTraverser
     private void Traverse(Component comp, ComponentAssembly assembly, Session session, int level, string output)
     {
         if (StopRequested || comp == null || comp.Tag == Tag.Null) return;
+        Tag componentTag = comp.Tag;
+        Tag pinnedPart = Tag.Null;
         try
         {
             if (comp.IsSuppressed) { ++_skipped; return; }
             Part part = NxGeometry.EnsurePrototype(comp, assembly, false);
+            _resources.Pin(part);
+            pinnedPart = part.Tag;
             Component[] children = comp.GetChildren();
             string id = comp.DisplayName;
             string name = AssemblyTraverserUtils.GetDescriptiveName(comp);
@@ -85,7 +95,11 @@ public sealed class AssemblyTraverser
                 : children.Length == 0;
             if (matched)
             {
-                if (!_processed.Add(part.Tag))
+                // Part tags change after unload/reload; the managed/native path
+                // identifies the prototype across different occurrences.
+                string key = string.IsNullOrEmpty(part.FullPath) ? part.Name : part.FullPath;
+                if (string.IsNullOrEmpty(key)) throw new InvalidOperationException("无法取得稳定的原型标识。");
+                if (!_processed.Add(key))
                 {
                     ++_skipped;
                     RunLog.Write("[Skip duplicate prototype] " + id);
@@ -94,7 +108,6 @@ public sealed class AssemblyTraverser
                 RunLog.Write(string.Format("[Process] {0} Name={1} ReadOnly={2} Modified={3}",
                     id, name, part.IsReadOnly, part.IsModified));
                 UFSession.GetUFSession().Ui.SetStatus("正在处理: " + id);
-                NxGeometry.LoadFully(part);
                 bool wasModified = part.IsModified;
                 try
                 {
@@ -138,8 +151,13 @@ public sealed class AssemblyTraverser
         catch (Exception ex)
         {
             ++_failed;
-            RunLog.Error("Traverse level=" + level + " tag=" + comp.Tag, ex);
+            RunLog.Error("Traverse level=" + level + " tag=" + componentTag, ex);
         }
-        // Never save, close, check out, or discard changes in source parts.
+        finally
+        {
+            if (pinnedPart != Tag.Null) _resources.Unpin(pinnedPart);
+            // Runs after context restoration, including failed loads/exports.
+            if (!_resources.ReleaseUnused("level=" + level + " component=" + componentTag)) ++_failed;
+        }
     }
 }

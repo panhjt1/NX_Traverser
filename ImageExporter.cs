@@ -19,9 +19,9 @@ public sealed class ImageExporter : ITransactionHandler
         Part part = comp.Prototype as Part;
         if (part == null || session.Parts.Display != part || session.Parts.Work != part)
             throw new InvalidOperationException("截图必须在目标原型部件上下文中执行。");
-        // Loads descendant geometry too, avoiding screenshots of partially loaded assemblies.
-        if (NxGeometry.CollectBodyTags(part).Count == 0)
-            throw new InvalidOperationException("没有可截图实体。");
+        RunLog.Write("[Load display] " + comp.DisplayName + "（截图不请求完整特征/精确实体）");
+        NxGeometry.PrepareDisplay(part);
+        session.DisplayManager.MakeUpToDate();
         ModelingView view = part.ModelingViews.WorkView;
         Matrix3x3 rotation = view.Matrix;
         Point3d translation = view.Origin;

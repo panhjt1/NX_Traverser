@@ -8,7 +8,10 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="CoreTests.cs" />
+    <Compile Include="PartResourceTests.cs" />
     <Compile Include="../BoundingBoxMath.cs" Link="BoundingBoxMath.cs" />
     <Compile Include="../ExportUtilities.cs" Link="ExportUtilities.cs" />
+    <Compile Include="../PartLifetime.cs" Link="PartLifetime.cs" />
+    <Compile Include="../NxPartResources.cs" Link="NxPartResources.cs" />
   </ItemGroup>
 </Project>

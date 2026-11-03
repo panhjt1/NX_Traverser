@@ -33,6 +33,7 @@ internal sealed class NxPartContext : IDisposable
     private void SetDisplay(Part part)
     {
         RunLog.Write("[Context] SetActiveDisplay: " + part.Name);
+        NxPartResources.BeforeLoad(part);
         PartLoadStatus loadStatus;
         PartCollection.SdpsStatus result = _session.Parts.SetActiveDisplay(part,
             DisplayPartOption.ReplaceExisting, PartDisplayPartWorkPartOption.SameAsDisplay, out loadStatus);
@@ -44,10 +45,19 @@ internal sealed class NxPartContext : IDisposable
     public static void CheckLoadStatus(PartLoadStatus status, string stage)
     {
         if (status == null || status.NumberUnloadedParts == 0) return;
+        bool failed = false;
         for (int i = 0; i < status.NumberUnloadedParts; ++i)
-            RunLog.Write("[Load] " + stage + ": " + status.GetPartName(i) + " code=" +
-                status.GetStatus(i) + " " + status.GetStatusDescription(i));
-        throw new InvalidOperationException(stage + " 未能完整加载部件，已跳过，详情见日志。");
+        {
+            int code = status.GetStatus(i);
+            // UF_PART_err_read_only_modified: retrieval changed a read-only part.
+            // It is not by itself proof that geometry failed to load. Exact
+            // queries still require IsFullyLoaded in NxGeometry.LoadFully.
+            bool readOnlyWarning = code == 641058;
+            RunLog.Write((readOnlyWarning ? "[Load warning] " : "[Load error] ") + stage + ": " +
+                status.GetPartName(i) + " code=" + code + " " + status.GetStatusDescription(i));
+            if (!readOnlyWarning) failed = true;
+        }
+        if (failed) throw new InvalidOperationException(stage + " 加载失败，已跳过，详情见日志。");
     }
 
     public void Dispose()

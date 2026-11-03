@@ -1,6 +1,6 @@
 # NX 2512 官方 API 核对与审查记录
 
-核对日期：2026-11-03。基线：`2470a54`。所有下列依据均来自 **Siemens 官方 2512 文档**，不是把旧版社区示例视为新版本 API。官方文档浏览器页面动态加载，本文链接到同一文档的正文或参考类。
+核对日期：2026-11-03。基线：`2470a54`。NX API 核对以 **Siemens 官方 2512 文档**为依据，不把旧版社区示例视为新版本 API；用户运行证据和 Microsoft 构建资料另行注明。官方文档浏览器页面动态加载，本文链接到同一文档的正文或参考类。
 
 ## 版本、构建和部署
 
@@ -40,11 +40,30 @@
 
 **源码已证实**：旧版逐图切换 `part.WCS.Visibility`，把三轴显示强制改成固定值，执行 `CleanUpFacetedFacesAndEdges`，遍历后主动 `Close(...UseResponses, null)`，并且只读抑制代码本身包含无效 API。它还在 Block Styler 对话框对象尚未释放时执行导出。
 
-**诊断推断**：这些写入/清理/关闭操作遇到只读或已修改的受管部件时，是弹窗的可疑触发点；未连接实际站点，不能断言它们就是每个弹窗的唯一原因。本分支删除这些操作，并在对话框释放后执行。不会签出、保存、改变 Teamcenter ACL、修改发布状态或清除源部件修改标记。
+**诊断推断**：这些写入/清理/关闭操作遇到只读或已修改的受管部件时，是弹窗的可疑触发点；未连接实际站点，不能断言它们就是每个弹窗的唯一原因。前一版删除这些操作，并在对话框释放后执行。本次根据大装配反馈重新引入有所有权边界的逐个卸载，详见下节。不会签出、保存、改变 Teamcenter ACL、修改发布状态或清除源部件修改标记。
 
 **保留的必要操作**：按需加载、切换显示/工作上下文、临时坐标系、屏幕视图旋转。加载旧版本零件、站点自定义回调和显示切换本身仍可能产生提示或修改标记。官方还说明 `SetActiveDisplay` 可能重置撤销标记列表；恢复 display/work/view 不等于恢复 undo 历史。本地应先在独立测试会话验收。
 
 若仍弹窗，用 `Traversal.log` 最后一条 `[Load geometry]` / `[Context]` / `[BoundingBox]` / `[Orient]` / `[Restore view]` 定位阶段，记录 NX 错误号、弹窗完整文字、2512 maintenance build、该对象是否已发布/被他人签出、当前 work/display 状态及 NX syslog。不要直接加猜测的 suppress API 或强行签出来掩盖问题。
+
+## 本次实测日志后的加载/卸载核对
+
+用户日志提供了 `641058` 的实际中文含义“已修改只读部件”，以及 `641070`“不是该组件部件的合法版本”。这两个数值的映射来自用户运行证据；官方资料进一步说明只读加载修改的机制，不把数值出处冒充为官方枚举表。
+
+| 接口/行为 | 官方 2512 依据 | 本次处理 |
+|---|---|---|
+| 加载只读文件也可能改变内存 | [UF_PART_open](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_part/global.html#UF_PART_open) 明确：读取过程中修改了只读部件，会返回非零 `UF_PART_err_read_only_modified`；这不是执行 Save 的证明 | `641058` 单独记录为警告，随后检查实际加载状态；其他代码仍失败，不忽略混合状态中的其他错误 |
+| 部分与完整加载 | [BasePart](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38266.html)：`LoadThisPartPartially()` 把最小加载提升到至少部分加载，不加载子件；`PartLoadState` 返回实际状态，`IsFullyLoaded` 验证完整加载 | 截图递归准备后代部分加载显示数据，去掉 `CollectBodyTags`；精确测量仍调用完整加载并验证。没有承诺 NX 内部不会自行升级加载 |
+| 等显示操作完成 | [DisplayManager.MakeUpToDate](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a53102.html) | 加载显示数据后完成待处理显示操作再截图；图像完整性仍需实机验收 |
+| 枚举与保护会话 | [PartCollection](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a70134.html)：`ToArray()` 返回 BasePart[]；`GetDisplayedParts()` 返回全部显示部件；`BaseWork` 返回工作部件 | 建立初始状态基线；保护所有显示窗口、work 及 [Component.Parent/OwningPart](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a37862.html) 工作路径；活动递归祖先引用计数保护 |
+| 逐个关闭临时部件 | [BasePart.Close/CloseModified](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38266.html)：wholeTree=false 只卸载指定部件；CloseModified 允许关闭已修改部件；responses 仅在 UseResponses 时使用 | 明确 False + CloseModified + null，仅作用于临时部件及本次触碰/提升的初始干净部分加载部件；不保存，舍弃其本次内存变化。禁止整树/CloseAll；关闭后验证不再出现在 Parts 集合 |
+| 关闭与内存不完全等价 | [UF_PART_close](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_part/global.html#UF_PART_close) 特别说明该 UF 函数不删除 undo marks，因此关闭后仍可能保留大量内存 | 采用上面的 BasePart API，不假定其一定立即降低进程内存；不执行 UF_UNDO_delete_all_marks。记录实际已加载数和 PrivateMB，由本地测量确认 |
+
+关闭已修改临时部件时不走“询问是否保存”的选择路径，但公开接口依据不足以保证屏蔽 NX 返回交互界面后的所有只读消息、Teamcenter 站点扩展的对话框。没有使用 SAP 集成专用环境变量、猜测 suppress API、反射、键盘自动确认、改变权限或清除修改标记。
+
+清理覆盖加载异常（连带打开的依赖）、导出异常、取消和正常返回。关闭失败停止后续加载；保留部件新增修改标记输出 `[WARN retained modified]`。同一原型跨卸载重载以路径去重，避免 tag 改变造成重复导出。
+
+新增独立测试使用 `PartResourceTests.cs` 中明确标记的 NX 测试替身，运行真实资源管理器控制流；验证保护/释放/拒绝关闭分支，不验证 NX SDK 签名、几何生命周期或原生弹窗。后者仍交本地 2512/Teamcenter 验收。
 
 ## 其他审查修复及边界
 
@@ -53,7 +72,7 @@
 - 原 WCS 算法旋转的是 ACS 外包围盒，不是实体，会高估；原 ACS 又错误依赖当前 WCS。已直接按目标坐标系查询并正确聚合方向向量。
 - 不再用坐标绝对值大于 1e6 的规则静默过滤实体；拒绝 NaN/Infinity/负尺寸；任一实体失败则不写不完整 CSV。
 - 多个实例共享同一个原型只导出一次；这里输出的是**原型及其后代**的尺寸，ACS/WCS 都属于该原型，不是顶层装配的实例坐标。匹配子装配后不再单独导出其子件，沿用原筛选语义。
-- 不主动关闭加载的部件，以免关闭用户已有部件/破坏共享原型；代价是大型装配的会话内存增长。默认遍历深度仍为 5；可通过配置 `maxDepth` 调整，遇到上限会记录跳过。
+- 已按本次用户要求改为逐节点卸载临时部件，保护用户原有完整加载/已修改/活动部件及递归祖先；详见下节。默认遍历深度仍为 5，可通过 `maxDepth` 调整。单个匹配大装配及 NX 缓存仍可能造成较高峰值，需实测。
 - 当前取消为外部调用 `AssemblyTraverser.RequestStop()` 的协作式取消；仓库没有停止窗口，不承诺 ESC 可以终止阻塞的 NX API 调用。
 - 每次输出到新的子目录，CSV 首五列兼容原字段，新增单位/坐标系/范围/实体数；名称转义、小数点固定、中文 UTF-8 BOM、PNG 文件名防冲突。
 - 为减少源部件状态修改，图片保留当前 WCS/三轴可见性；需要无坐标轴截图时，在用户可控的会话设置中预先调整并做本地验证。

@@ -66,6 +66,43 @@ internal static class CoreTests
         Assert(first != second, "Sanitized names must not collide");
         Assert(first.IndexOf('/') < 0 && second.IndexOf(':') < 0, "Windows filename characters");
         Assert(ExportUtilities.SafeFileStem(new string('x', 300), "long").Length < 100, "Bound filename length");
+        LifetimeRegression();
+        _checks += PartResourceTests.Run();
         Console.WriteLine("PASS: " + _checks + " core regression checks");
+    }
+
+    private static void LifetimeRegression()
+    {
+        var lifetime = new PartLifetime<string>();
+        lifetime.RegisterInitial("fully loaded", true);
+        lifetime.RegisterInitial("unsaved edit", true);
+        lifetime.RegisterInitial("clean partial", false);
+        lifetime.RegisterInitial("untouched partial", false);
+        lifetime.Touch("fully loaded");
+        lifetime.Touch("unsaved edit");
+        lifetime.Touch("clean partial");
+        Assert(!lifetime.CanRelease("fully loaded"), "Keep preexisting full geometry");
+        Assert(!lifetime.CanRelease("unsaved edit"), "Never discard preexisting edits");
+        Assert(!lifetime.CanRelease("untouched partial"), "Do not sweep untouched partial parts");
+        Assert(lifetime.CanRelease("clean partial"), "Release temporary promotion of clean partial part");
+        Assert(lifetime.CanRelease("opened during failed load"), "Recover dependencies opened before a load throws");
+
+        lifetime.Pin("new shared ancestor");
+        lifetime.Pin("new shared ancestor");
+        lifetime.Unpin("new shared ancestor");
+        Assert(!lifetime.CanRelease("new shared ancestor"), "Shared ancestor remains pinned by parent frame");
+        lifetime.Unpin("new shared ancestor");
+        Assert(lifetime.CanRelease("new shared ancestor"), "Release ancestor when final frame exits");
+        lifetime.Released("new shared ancestor");
+        Assert(lifetime.CanRelease("new shared ancestor"), "A newly loaded part stays temporary if reopened");
+
+        lifetime.Protect("clean partial");
+        Assert(!lifetime.CanRelease("clean partial"), "Active work/display protection wins over touch");
+        lifetime.RegisterInitial("partial repeated", false);
+        lifetime.Touch("partial repeated");
+        lifetime.Released("partial repeated");
+        Assert(!lifetime.CanRelease("partial repeated"), "Released initial part needs a new touch");
+        lifetime.Touch("partial repeated");
+        Assert(lifetime.CanRelease("partial repeated"), "Repeated occurrence promotion can be released again");
     }
 }

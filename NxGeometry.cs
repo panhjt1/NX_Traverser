@@ -10,6 +10,7 @@ internal static class NxGeometry
         Part part = component.Prototype as Part;
         if (part == null)
         {
+            NxPartResources.BeforeLoad(null);
             ComponentAssembly.OpenComponentStatus[] openStatus;
             using (PartLoadStatus status = assembly.OpenComponents(ComponentAssembly.OpenOption.ComponentOnly,
                 new[] { component }, out openStatus))
@@ -22,8 +23,13 @@ internal static class NxGeometry
         if (part == null) throw new InvalidOperationException("无法读取组件原型: " + component.DisplayName);
         if (fully) LoadFully(part);
         else
+        {
+            NxPartResources.BeforeLoad(part);
             using (PartLoadStatus status = part.LoadThisPartPartially())
                 NxPartContext.CheckLoadStatus(status, "LoadThisPartPartially " + part.Name);
+            if (part.PartLoadState != PartLoadState.PartiallyLoaded && part.PartLoadState != PartLoadState.FullyLoaded)
+                throw new InvalidOperationException("部件显示数据未加载: " + part.Name + " state=" + part.PartLoadState);
+        }
         return part;
     }
 
@@ -31,6 +37,7 @@ internal static class NxGeometry
     {
         if (!part.IsFullyLoaded)
         {
+            NxPartResources.BeforeLoad(part);
             bool modified = part.IsModified;
             RunLog.Write("[Load geometry] " + part.Name + " ReadOnly=" + part.IsReadOnly + " Modified=" + modified);
             using (PartLoadStatus status = part.LoadThisPartFully())
@@ -39,6 +46,32 @@ internal static class NxGeometry
                 RunLog.Write("[WARN] 加载几何后 NX 将部件标记为已修改: " + part.Name);
         }
         if (!part.IsFullyLoaded) throw new InvalidOperationException("几何未完整加载: " + part.Name);
+    }
+
+    // Screenshots need display data, not feature history or exact body queries.
+    // Visit all unsuppressed descendants so an unloaded branch is not silently
+    // omitted, but never force LoadThisPartFully just to count screenshot bodies.
+    public static void PrepareDisplay(Part part)
+    {
+        Component root = part.ComponentAssembly.RootComponent;
+        if (root == null) return;
+        var ancestors = new HashSet<Tag> { part.Tag };
+        foreach (Component child in root.GetChildren()) PrepareDisplay(child, part.ComponentAssembly, ancestors, 0);
+    }
+
+    private static void PrepareDisplay(Component component, ComponentAssembly assembly,
+        HashSet<Tag> ancestors, int depth)
+    {
+        if (AssemblyTraverser.StopRequested) throw new OperationCanceledException("截图加载已停止。");
+        if (component.IsSuppressed) return;
+        if (depth > 100) throw new InvalidOperationException("装配结构超过 100 层。");
+        Part part = EnsurePrototype(component, assembly, false);
+        if (!ancestors.Add(part.Tag)) throw new InvalidOperationException("检测到循环装配引用。");
+        try
+        {
+            foreach (Component child in component.GetChildren()) PrepareDisplay(child, assembly, ancestors, depth + 1);
+        }
+        finally { ancestors.Remove(part.Tag); }
     }
 
     // Whole selected prototype including unsuppressed descendant occurrences.
