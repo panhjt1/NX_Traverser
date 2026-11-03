@@ -84,7 +84,40 @@ internal static class PartResourceTests
             Check(!resources.ReleaseUnused("exception") && AssemblyTraverser.Stopped, "Close exception requests stop");
             throwing.ThrowOnClose = false;
         }
+        CheckDisplayContext();
         return _checks;
+    }
+
+    private static void CheckDisplayContext()
+    {
+        var session = new Session();
+        Part original = session.Add("original display", PartLoadState.FullyLoaded);
+        session.Parts.BaseWork = original;
+        session.Parts.Displayed.Add(original);
+        Part target = session.Add("read-only target", PartLoadState.PartiallyLoaded);
+        session.Parts.LoadCodes = new[] { 641058 };
+        using (var context = new NxPartContext(session, target))
+        {
+            Check(session.Calls.Count == 2 && session.Calls[0] == "load read-only target" &&
+                session.Calls[1] == "display read-only target", "Target is loaded before activation");
+            Check(target.IsFullyLoaded && session.Parts.Work == target, "Read-only warning permits a loaded target");
+        }
+        Check(session.Parts.Work == original && session.Parts.Display == original, "Restore original context");
+        Check(session.Calls.Count == 3 && session.Calls[2] == "display original display", "Do not preload original display on restoration");
+
+        bool failed = false;
+        try { NxPartContext.CheckLoadStatus(new PartLoadStatus { Codes = new[] { 641058, 641070 } }, "mixed"); }
+        catch (InvalidOperationException) { failed = true; }
+        Check(failed, "Read-only warning must not hide another load error");
+
+        session.Calls.Clear();
+        target.ThrowOnLoad = true;
+        target.PartLoadState = PartLoadState.PartiallyLoaded;
+        failed = false;
+        try { using (var context = new NxPartContext(session, target)) { } }
+        catch (InvalidOperationException) { failed = true; }
+        Check(failed && session.Calls.Count == 1, "Failed preload never enters SetActiveDisplay");
+        Check(session.Parts.Work == original && session.Parts.Display == original, "Failed preload leaves original context intact");
     }
 }
 
@@ -92,6 +125,17 @@ namespace NXOpen
 {
     public enum Tag { Null }
     public enum PartLoadState { NotLoaded, FullyLoaded, PartiallyLoaded, MinimallyLoaded }
+    public enum DisplayPartOption { ReplaceExisting }
+    public enum PartDisplayPartWorkPartOption { SameAsDisplay }
+    public sealed class PartLoadStatus : IDisposable
+    {
+        public int[] Codes = new int[0];
+        public int NumberUnloadedParts { get { return Codes.Length; } }
+        public int GetStatus(int index) { return Codes[index]; }
+        public string GetPartName(int index) { return "test part"; }
+        public string GetStatusDescription(int index) { return "test status"; }
+        public void Dispose() { }
+    }
     public class BasePart
     {
         public enum CloseWholeTree { False, True }
@@ -103,7 +147,7 @@ namespace NXOpen
         public bool IsReadOnly = true;
         public PartLoadState PartLoadState;
         public bool IsFullyLoaded { get { return PartLoadState == PartLoadState.FullyLoaded; } }
-        public bool Closed, RefuseClose, ThrowOnClose;
+        public bool Closed, RefuseClose, ThrowOnClose, ThrowOnLoad;
         public void Close(CloseWholeTree tree, CloseModified modified, object responses)
         {
             if (tree != CloseWholeTree.False || modified != CloseModified.CloseModified || responses != null)
@@ -117,10 +161,34 @@ namespace NXOpen
     public sealed class Part : BasePart { }
     public sealed class PartCollection
     {
+        public enum SdpsStatus { Ok }
+        public enum RefsetOption { PreserveRefset }
+        public enum WorkComponentOption { Given }
         public readonly List<BasePart> Items = new List<BasePart>();
         public readonly List<BasePart> Displayed = new List<BasePart>();
         public BasePart BaseWork;
         public Assemblies.Component WorkComponent;
+        public Part Work { get { return BaseWork as Part; } }
+        public Part Display { get { return Displayed.Count == 0 ? null : Displayed[0] as Part; } }
+        public int[] LoadCodes = new int[0];
+        public SdpsStatus SetActiveDisplay(Part part, DisplayPartOption displayOption,
+            PartDisplayPartWorkPartOption workOption, out PartLoadStatus status)
+        {
+            part.Owner.Calls.Add("display " + part.Name);
+            Displayed[0] = part;
+            BaseWork = part;
+            WorkComponent = null;
+            status = new PartLoadStatus { Codes = LoadCodes };
+            return SdpsStatus.Ok;
+        }
+        public void SetWorkComponent(Assemblies.Component component, RefsetOption refset,
+            WorkComponentOption option, out PartLoadStatus status)
+        {
+            WorkComponent = component;
+            BaseWork = component.Prototype as Part;
+            status = new PartLoadStatus();
+        }
+        public void SetWork(Part part) { BaseWork = part; }
         public BasePart[] ToArray() { return Items.ToArray(); }
         public BasePart[] GetDisplayedParts() { return Displayed.ToArray(); }
     }
@@ -128,6 +196,7 @@ namespace NXOpen
     {
         private int _next;
         public readonly PartCollection Parts = new PartCollection();
+        public readonly List<string> Calls = new List<string>();
         public Part Add(string name, PartLoadState state, bool modified = false)
         {
             var part = new Part { Owner = this, Tag = (Tag)(++_next), Name = name, PartLoadState = state, IsModified = modified };
@@ -154,4 +223,16 @@ internal static class RunLog
 {
     public static void Write(string text) { }
     public static void Error(string stage, Exception error) { }
+    public static void NxCall(string stage, Action action) { action(); }
+}
+// Simulate the outcome of the load adapter; actual geometry loading is NOT
+// validated by this double. NxPartContext itself is compiled from production.
+internal static class NxGeometry
+{
+    public static void LoadFully(Part part)
+    {
+        part.Owner.Calls.Add("load " + part.Name);
+        if (part.ThrowOnLoad) throw new InvalidOperationException("Simulated load failure");
+        part.PartLoadState = PartLoadState.FullyLoaded;
+    }
 }

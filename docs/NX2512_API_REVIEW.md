@@ -65,6 +65,22 @@
 
 新增独立测试使用 `PartResourceTests.cs` 中明确标记的 NX 测试替身，运行真实资源管理器控制流；验证保护/释放/拒绝关闭分支，不验证 NX SDK 签名、几何生命周期或原生弹窗。后者仍交本地 2512/Teamcenter 验收。
 
+## SetActiveDisplay 内的只读加载状态：本次调整
+
+用户最新日志证实逐节点卸载执行，但 `641058` 改由 SetActiveDisplay 的 PartLoadStatus 报告；用户未记录弹窗具体时机。因此，显示切换发生加载相关状态是事实，模态提示是否在该调用内出现仍未证实。
+
+[SetActiveDisplay](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a70134.html) 的官方返回参数明确包含加载新显示部件时的错误和警告；[LoadThisPartFully](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38266.html) 仅完整加载本部件、不递归加载组件，并返回 PartLoadStatus。基于两者，目标激活路径改为先显式完整加载当前原型并核对 IsFullyLoaded，再 SetActiveDisplay；恢复原显示部件不增加显式预加载。截图后代仍使用部分加载，卸载边界不变。
+
+这是有依据的调用顺序调整，**并非文档承诺的无弹窗 API**。完整预加载本身仍可能更新只读旧部件或触发站点回调。配套日志记录调用开始/结束、状态、耗时；准确效果需对同一受管样例实测。
+
+本次还核对了以下候选，但未作为屏蔽方案：
+
+- [UI.UserInterfacePreferences](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a81018.html) 的 [DisplayAlertsOnWarnings](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a72018.html)：文档范围是特征创建/编辑/更新中的诊断警告，错误始终显示。它不是已证实的只读消息开关，因此不改用户偏好。
+- [MessageBoxTester](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38486.html)：是自动化测试消息验证接口，相关方法要求 NX Automated Testing Studio 许可；SuppressAllQuestionMessageBox 会选择问题框答案，不能作为本插件通用方案。
+- [CreateIsolateViewWithComponents](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a37866.html)：确有临时隔离视图创建接口，但尚未核实完整退出/恢复及多视角截图生命周期，本次不引入未经核实的替代实现。
+
+独立控制流测试新增预加载先于激活、预加载失败不切换、原显示恢复和混合错误检查。使用测试替身，不验证 NX 的原生弹窗、加载副作用或几何正确性。
+
 ## 其他审查修复及边界
 
 - DLX XML 声明前空行使 XML 无法严格解析；`.gitignore` 也错误忽略 DLX。已修复。`NX="1946"` 保留真实生成器来源，需本地 Styler 验证/另存，不能只改数字冒充格式升级。

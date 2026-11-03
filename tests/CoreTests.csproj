@@ -13,5 +13,6 @@
     <Compile Include="../ExportUtilities.cs" Link="ExportUtilities.cs" />
     <Compile Include="../PartLifetime.cs" Link="PartLifetime.cs" />
     <Compile Include="../NxPartResources.cs" Link="NxPartResources.cs" />
+    <Compile Include="../NxPartContext.cs" Link="NxPartContext.cs" />
   </ItemGroup>
 </Project>

@@ -21,7 +21,16 @@ internal sealed class NxPartContext : IDisposable
         try
         {
             if (session.Parts.Display != part || session.Parts.Work != part)
-                SetDisplay(part);
+            {
+                // SetActiveDisplay may fully load the target itself. Complete
+                // that load explicitly before requesting the new work/display
+                // context, so we can consume PartLoadStatus before activation.
+                // Only this prototype is preloaded, never its whole tree.
+                RunLog.Write("[Context prepare] " + part.Name + " State=" + part.PartLoadState +
+                    " ReadOnly=" + part.IsReadOnly + " Modified=" + part.IsModified);
+                NxGeometry.LoadFully(part);
+                SetDisplay(part, "activate target");
+            }
         }
         catch
         {
@@ -30,16 +39,22 @@ internal sealed class NxPartContext : IDisposable
         }
     }
 
-    private void SetDisplay(Part part)
+    private void SetDisplay(Part part, string purpose)
     {
-        RunLog.Write("[Context] SetActiveDisplay: " + part.Name);
+        RunLog.Write("[Context] SetActiveDisplay (" + purpose + "): " + part.Name +
+            " State=" + part.PartLoadState + " Modified=" + part.IsModified);
         NxPartResources.BeforeLoad(part);
-        PartLoadStatus loadStatus;
-        PartCollection.SdpsStatus result = _session.Parts.SetActiveDisplay(part,
-            DisplayPartOption.ReplaceExisting, PartDisplayPartWorkPartOption.SameAsDisplay, out loadStatus);
-        using (loadStatus) { CheckLoadStatus(loadStatus, "SetActiveDisplay"); }
-        if (result != PartCollection.SdpsStatus.Ok)
-            throw new InvalidOperationException("不能切换到建模显示部件: " + result);
+        RunLog.NxCall("SetActiveDisplay (" + purpose + ") " + part.Name, () =>
+        {
+            PartLoadStatus loadStatus;
+            PartCollection.SdpsStatus result = _session.Parts.SetActiveDisplay(part,
+                DisplayPartOption.ReplaceExisting, PartDisplayPartWorkPartOption.SameAsDisplay, out loadStatus);
+            using (loadStatus) { CheckLoadStatus(loadStatus, "SetActiveDisplay (" + purpose + ")"); }
+            if (result != PartCollection.SdpsStatus.Ok)
+                throw new InvalidOperationException("不能切换到建模显示部件: " + result);
+        });
+        RunLog.Write("[Context done] " + purpose + " " + part.Name + " State=" + part.PartLoadState +
+            " Modified=" + part.IsModified);
     }
 
     public static void CheckLoadStatus(PartLoadStatus status, string stage)
@@ -66,7 +81,7 @@ internal sealed class NxPartContext : IDisposable
         _disposed = true;
         try
         {
-            if (_display != null && _session.Parts.Display != _display) SetDisplay(_display);
+            if (_display != null && _session.Parts.Display != _display) SetDisplay(_display, "restore display");
             if (_workComponent != null && _session.Parts.WorkComponent != _workComponent)
             {
                 PartLoadStatus status;

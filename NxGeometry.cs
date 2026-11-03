@@ -11,10 +11,14 @@ internal static class NxGeometry
         if (part == null)
         {
             NxPartResources.BeforeLoad(null);
-            ComponentAssembly.OpenComponentStatus[] openStatus;
-            using (PartLoadStatus status = assembly.OpenComponents(ComponentAssembly.OpenOption.ComponentOnly,
-                new[] { component }, out openStatus))
-                NxPartContext.CheckLoadStatus(status, "OpenComponents " + component.DisplayName);
+            ComponentAssembly.OpenComponentStatus[] openStatus = null;
+            string stage = "OpenComponents " + component.DisplayName;
+            RunLog.NxCall(stage, () =>
+            {
+                using (PartLoadStatus status = assembly.OpenComponents(ComponentAssembly.OpenOption.ComponentOnly,
+                    new[] { component }, out openStatus))
+                    NxPartContext.CheckLoadStatus(status, stage);
+            });
             if (openStatus == null || openStatus.Length != 1 ||
                 openStatus[0] != ComponentAssembly.OpenComponentStatus.SuccessfullyOpened)
                 throw new InvalidOperationException("组件未成功打开或已在加载过程中被删除。");
@@ -25,10 +29,13 @@ internal static class NxGeometry
         else
         {
             NxPartResources.BeforeLoad(part);
-            using (PartLoadStatus status = part.LoadThisPartPartially())
-                NxPartContext.CheckLoadStatus(status, "LoadThisPartPartially " + part.Name);
-            if (part.PartLoadState != PartLoadState.PartiallyLoaded && part.PartLoadState != PartLoadState.FullyLoaded)
-                throw new InvalidOperationException("部件显示数据未加载: " + part.Name + " state=" + part.PartLoadState);
+            RunLog.NxCall("LoadThisPartPartially " + part.Name, () =>
+            {
+                using (PartLoadStatus status = part.LoadThisPartPartially())
+                    NxPartContext.CheckLoadStatus(status, "LoadThisPartPartially " + part.Name);
+                if (part.PartLoadState != PartLoadState.PartiallyLoaded && part.PartLoadState != PartLoadState.FullyLoaded)
+                    throw new InvalidOperationException("部件显示数据未加载: " + part.Name + " state=" + part.PartLoadState);
+            });
         }
         return part;
     }
@@ -39,9 +46,16 @@ internal static class NxGeometry
         {
             NxPartResources.BeforeLoad(part);
             bool modified = part.IsModified;
-            RunLog.Write("[Load geometry] " + part.Name + " ReadOnly=" + part.IsReadOnly + " Modified=" + modified);
-            using (PartLoadStatus status = part.LoadThisPartFully())
-                NxPartContext.CheckLoadStatus(status, "LoadThisPartFully " + part.Name);
+            RunLog.Write("[Load geometry] " + part.Name + " State=" + part.PartLoadState +
+                " ReadOnly=" + part.IsReadOnly + " Modified=" + modified);
+            RunLog.NxCall("LoadThisPartFully " + part.Name, () =>
+            {
+                using (PartLoadStatus status = part.LoadThisPartFully())
+                    NxPartContext.CheckLoadStatus(status, "LoadThisPartFully " + part.Name);
+                if (!part.IsFullyLoaded) throw new InvalidOperationException("几何未完整加载: " + part.Name);
+            });
+            RunLog.Write("[Load geometry done] " + part.Name + " State=" + part.PartLoadState +
+                " Modified=" + part.IsModified);
             if (!modified && part.IsModified)
                 RunLog.Write("[WARN] 加载几何后 NX 将部件标记为已修改: " + part.Name);
         }

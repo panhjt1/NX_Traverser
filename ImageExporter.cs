@@ -19,7 +19,7 @@ public sealed class ImageExporter : ITransactionHandler
         Part part = comp.Prototype as Part;
         if (part == null || session.Parts.Display != part || session.Parts.Work != part)
             throw new InvalidOperationException("截图必须在目标原型部件上下文中执行。");
-        RunLog.Write("[Load display] " + comp.DisplayName + "（截图不请求完整特征/精确实体）");
+        RunLog.Write("[Load display] " + comp.DisplayName + "（后代仅请求显示数据，不逐个完整加载）");
         NxGeometry.PrepareDisplay(part);
         session.DisplayManager.MakeUpToDate();
         ModelingView view = part.ModelingViews.WorkView;

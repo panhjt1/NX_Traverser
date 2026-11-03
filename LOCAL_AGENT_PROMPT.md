@@ -25,12 +25,12 @@
 | `ClassLibrary1.dlx`、`.gitignore` | XML 声明前空行修复，XML 格式化，移除个人绝对路径，改 OK/Cancel，DLX 纳入跟踪；保留全部 9 个控件。`NX="1946"` 保留真实生成器来源，需 2512 Styler 验证另存，不能仅把数字改成 2512 |
 | `UIscripts.cs` | 已弃用 Show 改 Launch；检查 Ok 返回值；只在本次 OK 成功后保存配置；Dispose 对话框后运行；Apply 只验证，Cancel 不执行；释放 PropertyList；按 DLL 所在目录优先寻找配套 DLX |
 | `TraversalConfig.cs`、`ExportUtilities.cs` | 输入验证、空白过滤、中文 ACS/WCS 映射；`maxDepth` 默认 5；CSV 引号转义/固定小数点；安全且防冲突的 Windows 文件名 |
-| `AssemblyTraverser.cs`、`NxGeometry.cs` | 新建每次运行目录；按需加载并检查/释放状态；检查 OpenComponentStatus；跳过抑制项；相同原型只处理一次；匹配装配后不单独导出后代；按稳定部件路径去重；移除截图前强制完整加载；节点 finally 清理临时部件；事务独立捕获错误；防止重入 |
+| `AssemblyTraverser.cs`、`NxGeometry.cs` | 新建每次运行目录；按需加载并检查/释放状态；检查 OpenComponentStatus；跳过抑制项；相同原型只处理一次；匹配装配后不单独导出后代；按稳定部件路径去重；截图后代不再强制完整加载；节点 finally 清理临时部件；事务独立捕获错误；防止重入 |
 | `NxPartResources.cs`、`PartLifetime.cs` | 新增运行前基线、活动祖先保护、逐节点卸载及释放失败停止；保护原有完整加载/已修改/显示/工作部件，允许卸载本次使用的原有干净部分加载部件；记录 LoadedParts/PrivateMB；独立所有权策略可回归 |
-| `NxPartContext.cs` | `641058` 仅记警告，仍验证实际加载状态；其他状态（含 `641070`）保持失败。使用 SetActiveDisplay 建立目标原型上下文；恢复原显示部件及精确工作组件，PreserveRefset；恢复失败停止遍历。官方说明显示切换可能重置 undo 标记，不能承诺恢复撤销历史 |
+| `NxPartContext.cs` | 显示切换前先完整预加载当前目标原型，检查状态后再激活；恢复原显示部件不增加显式预加载。`641058` 仅记警告，仍验证实际加载状态；其他状态（含 `641070`）保持失败。使用 SetActiveDisplay 建立目标原型上下文；恢复原显示部件及精确工作组件，PreserveRefset；恢复失败停止遍历。官方说明显示切换可能重置 undo 标记，不能承诺恢复撤销历史 |
 | `ImageExporter.cs` | 不再调用 CollectBodyTags/强制完整加载后代；改遍历部分加载显示数据，等显示操作完成再截图。删除无效 UFSession.UI/AskSuppressDialogs 和反射常量；删除 WCS 可见性写入、固定三轴设置、源几何清理；保留已有 WCS/三轴可见性，恢复原视图；Builder 在 finally 销毁；恢复失败停止遍历；中途取消不计为完整截图事务 |
 | `BoundingBoxExporter.cs`、`BoundingBoxMath.cs` | 官方确认 Tag.Null 表示当前 WCS，不是 ACS。ACS 使用临时单位 CSYS；WCS 直接查询该方向的精确盒；按 UF 方向向量聚合八角点；装配后代使用 occurrence tag；临时对象 finally 清理；失败时不写偏小的尺寸 |
-| `RunLog.cs` | `Traversal.log` 同步 Listing Window，含阶段、只读/修改状态、NX 错误码；检测加载后新增修改标记；不清除修改标记 |
+| `RunLog.cs` | 新增成对的 NX 调用 begin/end、编号、完成状态和耗时；`Traversal.log` 同步 Listing Window，含阶段、只读/修改状态、NX 错误码；检测加载后新增修改标记；不清除修改标记 |
 | `NX_Traverser.csproj`、`scripts/build.ps1` | 默认 net48 / x64，新增显式 v4.7.2 兼容编译参数；使用当前安装的 NXBIN/managed；Siemens 引用 Copy Local=false；嵌入本机 NXSigningResource.res；输出按框架隔离的 DLL/DLX、构建日志和 SHA256 |
 | `tests/` | 独立 C# 核心回归和 XML/控件一致性验证；新增 PartResourceTests，使用明确的测试替身验证真实资源管理器的清理控制流，测试替身不是 NX SDK，不验证 Siemens ABI/API 或弹窗 |
 
@@ -81,13 +81,13 @@ $plugin = '.\bin\Release\v4.8\NX_Traverser.dll' # 若验证的是 v4.7.2，请�
 
 此前 4.7.2 兼容选项更新只修改构建选择、产物路径和交接说明；本次内存/只读修复另见下节。构建脚本使用 UTF-8 BOM，兼容 Windows PowerShell 5.1 对中文脚本的读取。
 
-## 本次内存与只读日志修复（2026-11-03，接续 e3b6546）
+## 逐节点卸载修复（ec07e1a；显示预加载随后补充）
 
 用户实测日志显示：截图前及其螺栓子件的 `LoadThisPartFully` 返回 `641058`；旧代码把所有 load status 当成失败，且整轮不卸载。`641070` 是另一种组件版本错误，不能忽略。最后一次弹窗的具体来源尚未确认，不能把同时间出现的日志当作已证实的唯一原因。
 
 本次实施：
 
-1. 仅截图不再显式调用完整加载/精确实体收集。仍递归加载未抑制后代的显示数据并检查 `PartLoadState`；测量仍要求 `IsFullyLoaded`，任何其他加载错误仍使该事务失败。`641058` 不再直接判失败，若实际加载状态不满足要求仍失败。
+1. 截图不再递归完整加载/收集后代精确实体。最新版本在显示切换前显式完整加载目标原型本身（原因见下节）；后代仍递归加载显示数据并检查 `PartLoadState`；测量仍要求 `IsFullyLoaded`，任何其他加载错误仍使该事务失败。`641058` 不再直接判失败，若实际加载状态不满足要求仍失败。
 2. 每个遍历节点在 `finally` 中，先恢复视图和 work/display，再释放本次新打开的部件，包括失败操作带入的依赖。初始干净的部分/最小加载部件，若被本次触碰或自动提升加载，也允许卸载；**这些原有部件运行后可能处于未加载状态**，不会自动重载以免重新占用内存。
 3. 保留初始完整加载部件、初始已修改部件、全部原始显示窗口、原工作部件与工作组件祖先；父递归帧仍在使用的原型有引用计数保护。共享原型不会因一个子帧退出而关闭。去重使用路径，不再依赖卸载重载会改变的 tag。
 4. 使用 `BasePart.Close(False, CloseModified, null)` **只关单个部件**，丢弃该临时部件本次加载/显示造成的内存变化，不调用保存，不使用整树关闭或 CloseAll。关闭后核查是否仍在 Parts 集合；失败即停止继续加载，并在最终清理重试。不会删除全部用户 undo 来强行回收内存。
@@ -99,12 +99,35 @@ $plugin = '.\bin\Release\v4.8\NX_Traverser.dll' # 若验证的是 v4.7.2，请�
 
 在独立测试会话、相同起始加载状态下使用用户原来的过滤条件：
 
-- 先“仅截图”，再“仅测量”，最后组合；截图日志不应出现由本工具显式发起的 `[Load geometry]`，图片应完整，视角/参考集/隐藏状态符合预期。检查日志中那类带螺栓的匹配装配。
+- 先“仅截图”，再“仅测量”，最后组合；截图允许目标原型本身的 `[Load geometry]` 预加载，后代应走部分加载；图片应完整，视角/参考集/隐藏状态符合预期。检查日志中那类带螺栓的匹配装配。
 - 对实际返回 `641058` 的样例验证：状态足够时继续导出；不足时仍失败。包含 `641058` + 另一错误的混合状态不能整体放行。`641070` 仍报错，不自动换成其他修订版本。
 - 用大量不同原型和跨分支重复原型，检查每次 `[Unload done]`、稳定的 LoadedParts 趋势、PrivateMB 峰值及完成后的内存；已导出原型再次出现应跳过，即使重载后 tag 不同。至少连续跑两轮，并与旧版同场景比较。
 - 覆盖父子共享原型、原工作组件位于子装配、多个显示窗口、初始已修改部件、初始完整加载部件、初始干净部分加载部件。前五类受保护；最后一类在被本次使用后允许卸载。关闭不能删除树节点，未访问的部分加载部件应保留。
 - 人为制造加载失败、输出不可写、导出失败和协作式取消：临时部件仍应被释放、原始工作/显示上下文恢复。关闭失败必须记录 `[STOP]` 并停止继续加载，不能继续把整树装进内存。
 - 注意任务结束返回界面后的最后一次弹窗。记录出现时最后一条日志、完整弹窗文本和 NX syslog；若有 `[WARN retained modified]`，记录对应部件的修改信息。分别比较仅截图/仅测量，确认是否仍由加载升级、视图、临时 CSYS 或站点回调触发。**不以清除 IsModified、强行签出或保存已发布部件作为通过标准。**
+
+## 本次显示切换预加载调整（接续 ec07e1a，2026-11-03）
+
+新日志已经显示 `[Unload done]`，已加载部件数按分支回到 1～2 个；这说明这份样例里卸载执行了。进程私有内存约 1.6～1.9 GB，不能据此断言大树峰值已受控或剩余内存全是缓存。
+
+`641058` 出现在 `SetActiveDisplay` 返回的加载状态内。用户没有记录弹窗出现的准确时机，因此**只能确认显示切换内报告了该状态，不能直接证明弹窗就在该调用内出现**。
+
+本次更改顺序：
+
+1. 在目标还没有被设为 work/display 时，对目标原型调用 `LoadThisPartFully`，处理返回的 `PartLoadStatus`，要求 `IsFullyLoaded=true`，再执行 `SetActiveDisplay`。
+2. 这只预加载当前目标原型，不是全树；后代截图仍部分加载。原显示部件的恢复沿用原路径，不增加显式完整预加载。每节点卸载及保护策略保持有效。
+3. 目的：把目标的完整加载放到有显式状态返回的步骤，减少显示激活内部隐式加载的机会。**这不是官方承诺的静默/无弹窗模式；效果尚待本地验证。** `641058` 仍记录，任何其他错误或未完全加载仍失败。
+4. `OpenComponents`、部分/完整加载、`SetActiveDisplay`、`Close` 增加 `[NX call begin] #N` / `[NX call end] #N`，含 Completed、ElapsedMs；显示切换另区分 `activate target` 和 `restore display`，记录 State/Modified。Completed 表示调用及状态检查是否成功，不表示“没有弹窗”。
+
+### 本地优先验证
+
+- 用上次会产生提示的同一测试样例，先只截图。确认日志顺序为 `Context prepare → LoadThisPartFully → State=FullyLoaded → SetActiveDisplay (activate target) → ImageExporter → restore display → Close`；已完整加载的目标可省略加载调用。
+- 比较 `641058` 是否转移到 `LoadThisPartFully`、SetActiveDisplay 是否仍返回警告，以及实际弹窗次数。不能只因日志不报错就认定消除了弹窗。
+- 若弹窗还在，**暂不关闭弹窗**，查看信息窗口/已自动刷新的 `Traversal.log`：记下最后一个有 begin 而尚无 end 的 `#N`、阶段和完整弹窗文字。关闭提示后保留对应 end 行。若没有尚未结束的调用，说明不能用这些已包裹调用直接定位，继续保留 NX syslog；特别注意是在最终 summary 之后发生的提示。
+- 即使用户没注意弹窗时机，ElapsedMs 也可供比较；但加载、Teamcenter 网络和人工点击都会增加耗时，不能靠耗时自动识别弹窗。
+- 确认图片内容/视角未变；目标及临时依赖仍及时卸载、加载失败不进入显示切换、混合 `641058 + 其他错误` 仍失败、失败后 work/display 恢复。与旧版比较整轮耗时和峰值内存。
+
+官方 API 核对补充了 UI 的 `DisplayAlertsOnWarnings`，其文档仅保证控制特征创建/编辑/更新时的诊断提示，不能把它当成 Teamcenter 只读通知开关。此版本没有设置它，也没有接入要求 Automated Testing Studio 许可的 MessageBoxTester。不要自行加猜测的全局 suppress 调用。
 
 ## 验证步骤与预期
 
@@ -148,11 +171,11 @@ dotnet run --project .\tests\CoreTests.csproj -c Release
 
 ## 当前已验证及未验证
 
-- 云端 **54 项独立 C# 断言通过**：原有数学/文本 28 项，部件所有权策略 11 项，资源管理器控制流 15 项。后两组覆盖共享祖先、原有编辑、部分加载提升、加载异常依赖、工作部件保护、关闭拒绝和关闭异常。使用 .NET 8.0.427 SDK 的 Roslyn 编译并执行；资源管理器测试使用 `tests/PartResourceTests.cs` 中的 NX 测试替身，不代表 NX SDK 编译或原生卸载验证。
+- 云端 **61 项独立 C# 断言通过**：原有数学/文本 28 项，部件所有权策略 11 项，资源管理器控制流 15 项，显示上下文/预加载/混合错误 7 项。后两组覆盖共享祖先、原有编辑、部分加载提升、加载异常依赖、工作部件保护、关闭拒绝和关闭异常。使用 .NET 8.0.427 SDK 的 Roslyn 编译并执行；资源管理器和显示上下文测试使用 `tests/PartResourceTests.cs` 中的 NX/加载适配器测试替身，不代表 NX SDK 编译或原生卸载验证。
 - `python tests/validate_dlx.py` 通过；`git diff --check` 通过。
 - 对比旧 DLX 解析树，除文件标题、日期尾部空白、OK/Cancel 导航外，原属性均保留。14 个插件源文件及 2 个测试源文件通过 C# 7.3 语法解析；这不包含 NX SDK 类型检查。
 - 已读取并核对官方 2512 API 链接，见 `docs/NX2512_API_REVIEW.md`。
-- 4.7.2 选项更新：使用 Microsoft 官方 `Microsoft.NETFramework.ReferenceAssemblies.net472` 1.0.3 的 mscorlib/System/System.Core，按 C# 7.3 编译通过独立核心测试程序及资源管理器测试替身构建；未在 Framework 4.7.2 运行时执行该程序，也未编译完整 NX 插件。MSBuild 项目求值确认默认 v4.8、显式 v4.7.2 及相互独立的输出/中间目录。
+- 4.7.2 选项更新：使用 Microsoft 官方 `Microsoft.NETFramework.ReferenceAssemblies.net472` 1.0.3 的 mscorlib/System/System.Core，按 C# 7.3 编译通过独立核心测试程序及资源管理器/显示上下文测试替身构建；未在 Framework 4.7.2 运行时执行该程序，也未编译完整 NX 插件。MSBuild 项目求值确认默认 v4.8、显式 v4.7.2 及相互独立的输出/中间目录。
 - **待本地**：NX SDK 编译/链接、签名、原生 DLX 打开、视图恢复精度、PNG、临时 CSYS 的只读行为、Teamcenter 全部实测。这里没有 NX 运行时，不能将离线检查替代这些结果。
 
 ## 回传并持续维护
