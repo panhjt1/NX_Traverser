@@ -6,11 +6,15 @@
     <OutputType>Library</OutputType>
     <AssemblyName>NX_Traverser</AssemblyName>
     <RootNamespace>NX_Traverser</RootNamespace>
-    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <!-- NX 2512's documented Framework baseline is 4.8. Allow an explicit
+         4.7.2 compatibility build for existing projects; NX references still
+         have to satisfy MSBuild's target-framework checks. -->
+    <TargetFrameworkVersion Condition="'$(TargetFrameworkVersion)' == ''">v4.8</TargetFrameworkVersion>
     <PlatformTarget>x64</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
     <LangVersion>7.3</LangVersion>
-    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <OutputPath>bin\$(Configuration)\$(TargetFrameworkVersion)\</OutputPath>
+    <IntermediateOutputPath>obj\$(Configuration)\$(TargetFrameworkVersion)\</IntermediateOutputPath>
     <DebugType>pdbonly</DebugType>
     <Optimize Condition="'$(Configuration)' == 'Release'">true</Optimize>
     <NXInstallDir Condition="'$(NXInstallDir)' == ''">$(UGII_BASE_DIR)</NXInstallDir>
@@ -40,6 +44,7 @@
     </None>
   </ItemGroup>
   <Target Name="ValidateNXInstallation" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="'$(TargetFrameworkVersion)' != 'v4.8' And '$(TargetFrameworkVersion)' != 'v4.7.2'" Text="本项目只提供 v4.8 和 v4.7.2 编译配置。" />
     <Error Condition="!Exists('$(NXManagedDir)\NXOpen.dll')" Text="指定 NX 2512 安装目录: /p:NXInstallDir=...；需要 NXBIN\managed\NXOpen.dll。" />
     <Error Condition="!Exists('$(NXManagedDir)\NXOpenUI.dll') Or !Exists('$(NXManagedDir)\NXOpen.UF.dll')" Text="NX 2512 managed 引用不完整。请安装对应 NX Open 开发组件。" />
     <Error Condition="!Exists('$(NXInstallDir)\UGOPEN\NXSigningResource.res')" Text="缺少 NX 签名资源 UGOPEN\NXSigningResource.res；请安装对应 NX Open 开发组件。" />

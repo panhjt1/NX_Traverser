@@ -1,6 +1,6 @@
 # Repository working instructions
 
-- Target runtime: Windows x64, Siemens NX 2512 / Teamcenter integration; plugin is .NET Framework 4.8.
+- Target runtime: Windows x64, Siemens NX 2512 / Teamcenter integration. The default compilation target is .NET Framework 4.8; an explicit v4.7.2 compatibility build is available for the user's existing project. Keep NX 2512 references and framework compatibility diagnostics; the target setting does not change the NX host runtime or prove compatibility.
 - After every source, DLX, or build configuration change, update `LOCAL_AGENT_PROMPT.md` with what changed, validation performed, and remaining local-agent tasks. Keep `docs/NX2512_API_REVIEW.md` current when API assumptions change.
 - Verify NX API names/signatures against the official target-version reference or installed SDK. Do not invent dialog suppression APIs or use reflection to guess them.
 - Do not save, close, check out, change access permissions, or clear modified flags on users' source parts. Restore work/display/view context and report restoration failures. Do not promise restoration of NX undo history.

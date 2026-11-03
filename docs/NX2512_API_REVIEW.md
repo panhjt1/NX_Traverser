@@ -4,10 +4,22 @@
 
 ## 版本、构建和部署
 
-- [2512 Product Notes](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/nx_rn/xid1753866/kuy1734360601359/fxn1734360624438/xid385122.html)：Designcenter Open 更名不改变 NXOpen API 名称；支持 .NET Framework 4.8 和 .NET 8。此分支使用 **net48 / x64**，不强制迁移 .NET Core。
+- [2512 Product Notes](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/nx_rn/xid1753866/kuy1734360601359/fxn1734360624438/xid385122.html)：Designcenter Open 更名不改变 NXOpen API 名称；支持 .NET Framework 4.8 和 .NET 8。此分支默认 **net48 / x64**，不强制迁移 .NET Core。针对用户原工程目标新增显式 `v4.7.2` 试编译选项，不能据此认定 NX 2512 官方支持 4.7.2 运行环境。
 - [Compiling and linking .NET](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/nx_api/nxopen_prog_guide/nel1734216491521/tms1734216491827/compiling_net.html)：Framework 引用来自 `NXBIN/managed`；Core 引用来自 `NXBIN/managed_core`。项目只引用 2512 Framework 版本，`Copy Local=false`，不分发 Siemens DLL。
 - [Release upgrades](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/nx_rn/xid1753866/kuy1734360601359/fxn1734360624438/genid_release_upgrades_49_5026.html)：跨功能版本需要用目标版本 SDK 全量重编译和回归，不能把旧 DLL 能加载等同于已兼容。此处完成源代码审查，本地仍需实际编译。
 - [Signing, language-specific details](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/nx_api/nxopen_prog_guide/xah1734216506204/xid1858041.html)：嵌入安装目录 `UGOPEN/NXSigningResource.res`，由本地 `NXBIN/SignDotNet` 签名并验证。项目已引用该资源，仓库不包含 Siemens 资源文件或二进制。
+
+## 编译目标与宿主运行时
+
+用户补充原 csproj 使用 4.7.2、历史编译成功，但尚未试编译本分支，也没有 4.8 缺失报错。`TargetFrameworkVersion` 是项目的编译目标，不代表机器最高可支持的框架。
+
+- [Microsoft 组件版本兼容性](https://learn.microsoft.com/en-us/dotnet/framework/migration-guide/version-compatibility)：类库随宿主运行时运行；较低编译目标不会把 NX 的运行时降级。
+- [MSB3644](https://learn.microsoft.com/en-us/visualstudio/msbuild/errors/msb3644)：缺少目标框架引用程序集时，应安装相应开发包或使用官方引用程序集包。不要直接根据旧 csproj 推断缺失。
+- [Microsoft 官方 net48 引用包](https://www.nuget.org/packages/Microsoft.NETFramework.ReferenceAssemblies.net48/1.0.3)：可以提供编译引用，本身不是 NX SDK 或可部署的运行库。
+
+构建脚本默认 v4.8，可显式指定 v4.7.2；中间文件、产物和日志按目标隔离。脚本把 MSB3274/MSB3275 作为失败处理，不通过旧 NX 引用或屏蔽警告来强行完成降级构建。需要本地 NX 2512 引用库的实际编译结果才能确定 v4.7.2 是否可用。
+
+本次使用 Microsoft 官方 net472 引用程序集编译了无 NX 依赖的 `BoundingBoxMath.cs`、`ExportUtilities.cs` 和核心测试程序，并检查了两种目标的 MSBuild 项目求值。未在 Framework 4.7.2 运行时执行测试，也未以 NX SDK 编译完整插件。
 
 ## 逐项核对
 

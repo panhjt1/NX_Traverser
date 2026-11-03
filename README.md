@@ -1,6 +1,6 @@
 # NX_Traverser
 
-在 Siemens NX / Teamcenter 集成环境遍历装配，导出多视角 PNG 和 ACS/WCS 包围盒 CSV。此分支面向 **NX 2512，C# .NET Framework 4.8，Windows x64**。
+在 Siemens NX / Teamcenter 集成环境遍历装配，导出多视角 PNG 和 ACS/WCS 包围盒 CSV。此分支面向 **NX 2512，C# .NET Framework（默认 4.8，可显式试编译 4.7.2），Windows x64**。
 
 当前是供本地编译和验收的源码版本：DLX/XML、核心数学与文本回归已检查，NX SDK 编译和 Teamcenter 实机测试尚待完成。
 
@@ -12,7 +12,9 @@
 .\scripts\build.ps1 -NXInstallDir 'C:\Program Files\Siemens\NX2512' -Configuration Release
 ```
 
-要求 VS 2022 / Build Tools 与 .NET Framework 4.8 Developer Pack。项目引用本机 `NXBIN/managed` 中的 NXOpen、NXOpenUI 和 NXOpen.UF，并嵌入本机签名资源。不要混用 1946 或 `managed_core` DLL，不要随插件部署 Siemens DLL。
+默认要求 VS 2022 / Build Tools 与 .NET Framework 4.8 Developer/Targeting Pack。复用原工程 4.7.2 目标时，可加 `-TargetFrameworkVersion v4.7.2`；需要对应开发包及支持 C# 7.3 的编译器。这个选项不改变 NX 2512 的运行环境要求；若 NX 引用要求更高框架，构建必须先解决该错误。项目引用本机 `NXBIN/managed` 中的 NXOpen、NXOpenUI 和 NXOpen.UF，并嵌入本机签名资源。不要混用 1946 或 `managed_core` DLL，不要随插件部署 Siemens DLL。
+
+默认产物位于 `bin/Release/v4.8/`；显式选择 4.7.2 时位于 `bin/Release/v4.7.2/`。
 
 将编译并按站点要求签名的 `NX_Traverser.dll` 与 `ClassLibrary1.dlx` 放在一起，从 NX 的“文件 → 执行 → NX Open/Designcenter Open”加载 DLL。入口为 `ClassLibrary1.Main`。本项目是多文件类库，不应把 `UIscripts.cs` 单独作为 Journal 播放。
 

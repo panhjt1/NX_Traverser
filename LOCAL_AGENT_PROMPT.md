@@ -29,13 +29,13 @@ git switch --track origin/fix/nx2512-teamcenter-readonly
 | `ImageExporter.cs` | 删除无效 UFSession.UI/AskSuppressDialogs 和反射常量；删除 WCS 可见性写入、固定三轴设置、源几何清理；保留已有 WCS/三轴可见性，恢复原视图；Builder 在 finally 销毁；恢复失败停止遍历；中途取消不计为完整截图事务 |
 | `BoundingBoxExporter.cs`、`BoundingBoxMath.cs` | 官方确认 Tag.Null 表示当前 WCS，不是 ACS。ACS 使用临时单位 CSYS；WCS 直接查询该方向的精确盒；按 UF 方向向量聚合八角点；装配后代使用 occurrence tag；临时对象 finally 清理；失败时不写偏小的尺寸 |
 | `RunLog.cs` | `Traversal.log` 同步 Listing Window，含阶段、只读/修改状态、NX 错误码；检测加载后新增修改标记；不清除修改标记 |
-| `NX_Traverser.csproj`、`scripts/build.ps1` | 新增 net48 / x64 构建；使用当前安装的 NXBIN/managed；Siemens 引用 Copy Local=false；嵌入本机 NXSigningResource.res；复制 DLX；输出构建日志和 SHA256 |
+| `NX_Traverser.csproj`、`scripts/build.ps1` | 默认 net48 / x64，新增显式 v4.7.2 兼容编译参数；使用当前安装的 NXBIN/managed；Siemens 引用 Copy Local=false；嵌入本机 NXSigningResource.res；输出按框架隔离的 DLL/DLX、构建日志和 SHA256 |
 | `tests/` | 独立 C# 核心回归和 XML/控件一致性验证，不需要 NX SDK；不替代实机测试 |
 
 ## 构建与签名
 
 1. 记录实际 NX 2512 maintenance build、Teamcenter 版本、NX 启动方式、VS/MSBuild 版本。确认运行中的 NX 与引用 DLL 来自同一 2512 安装。
-2. 需要 Visual Studio 2022（或 Build Tools，含 .NET 桌面构建）和 **.NET Framework 4.8 Developer Pack**。本插件用 Framework 4.8，不是 net8；不要引用 `managed_core`。
+2. 默认使用 Visual Studio 2022（或支持 C# 7.3、MSBuild 15.8+ 的 VS / Build Tools）和 **.NET Framework 4.8 Developer/Targeting Pack**。若显式试编译 v4.7.2，则需要对应 4.7.2 开发包。本插件不使用 net8/managed_core。只有运行库并不代表安装了开发引用包。
 3. 使用 **NX 2512 Block UI Styler** 打开 `ClassLibrary1.dlx`。确认中文标签、9 个 ID、八个英文视角条目、多选视角和 OK/Cancel。若工具要求升级另存，执行后提交该 DLX；不要生成模板覆盖 `UIscripts.cs`。XML 能解析不代表原生 Styler 验证通过。
 4. 编译，安装路径以本机实际位置为准：
 
@@ -43,18 +43,41 @@ git switch --track origin/fix/nx2512-teamcenter-readonly
 .\scripts\build.ps1 -NXInstallDir 'C:\Program Files\Siemens\NX2512' -Configuration Release
 ```
 
-输出应为 `bin/Release/NX_Traverser.dll` 与 `ClassLibrary1.dlx`，以及 PDB。`artifacts/build.binlog` 留在本地。目录内不应有任何 `NXOpen*.dll` 或 `ManagedLoader.dll`。记录全部警告，特别是 Obsolete、引用版本和平台警告；发现 API 不符时先查本机官方 XML 文档/2512 .NET Reference，再修代码，不使用反射猜测补丁。
+默认输出为 `bin/Release/v4.8/NX_Traverser.dll` 与 `ClassLibrary1.dlx`，以及 PDB；v4.7.2 输出在 `bin/Release/v4.7.2/`，避免两种目标产物混用。`artifacts/build-Release-v4.8.binlog`（或 v4.7.2 对应日志）留在本地。目录内不应有任何 `NXOpen*.dll` 或 `ManagedLoader.dll`。记录全部警告，特别是 Obsolete、引用版本和平台警告；发现 API 不符时先查本机官方 XML 文档/2512 .NET Reference，再修代码，不使用反射猜测补丁。
 
 5. 对无 NX Open Author 许可的使用者，应按站点授权方式签名。官方签名资源已加入项目，用 2512 安装中的工具（先在本机检查帮助/参数）：
 
 ```powershell
 $nxInstall = 'C:\Program Files\Siemens\NX2512'
-& "$nxInstall\NXBIN\SignDotNet.exe" '.\bin\Release\NX_Traverser.dll'
-& "$nxInstall\NXBIN\SignDotNet.exe" -verify '.\bin\Release\NX_Traverser.dll'
+$plugin = '.\bin\Release\v4.8\NX_Traverser.dll' # 若验证的是 v4.7.2，请改为对应目录
+& "$nxInstall\NXBIN\SignDotNet.exe" $plugin
+& "$nxInstall\NXBIN\SignDotNet.exe" -verify $plugin
 ```
 
 签名会改变 DLL，**签名后**再次记录 SHA256。不要将 Siemens DLL、资源文件、许可或公司部件提交到公开仓库。
 6. 部署到站点测试用自定义 `application` 目录，DLL/DLX 必须配套。通过 NX 的“文件 → 执行 → NX Open/Designcenter Open”启动 DLL，入口 `ClassLibrary1.Main`；它不是可单独播放的单文件 Journal。若采用现有菜单启动方式，先验证对应卸载策略；当前 `Immediately` 用于手动执行。
+
+## 原工程目标 4.7.2 的反馈（2026-11-03 更新）
+
+用户已澄清：**尚未发生编译错误**，只是本地原始 csproj 写的是 4.7.2，过去按此目标编译成功；这不证明机器不能编译 4.8，也不证明原引用就是 NX 2512。
+
+默认保留 NX 2512 官方的 Framework 4.8 基线。为复用旧工程目标，新增明确的兼容试编译命令：
+
+```powershell
+.\scripts\build.ps1 -NXInstallDir 'C:\Program Files\Siemens\NX2512' -TargetFrameworkVersion v4.7.2
+```
+
+也可直接用 MSBuild 的 `/p:TargetFrameworkVersion=v4.7.2`。两种目标都必须引用**当前 NX 2512 安装中的 NXBIN/managed**，不能拿 1946 库来换取编译成功。脚本将 MSB3274/MSB3275 视为错误，不忽略高版本框架依赖。
+
+本地处理顺序：
+
+1. 记录实际使用的 NXOpen.dll 路径/文件版本、MSBuild/C# 编译器版本、已安装的 Targeting Pack，以及采用的目标版本。此前“4.7.2 编译成功”是哪套 NX 引用也要确认。
+2. 可按上述 v4.7.2 命令试编译。若出现 `MSB3274/MSB3275` 或 `CS1705` 等更高版本引用错误，保留报错，使用默认 v4.8 配置并补齐 4.8 开发引用包；不要关闭兼容性检查。
+3. 若报 `MSB3644`，才说明指定版本的开发引用包缺失。可安装相应 Developer/Targeting Pack；无管理员权限时，可按 Microsoft 文档采用官方 `Microsoft.NETFramework.ReferenceAssemblies` 包提供编译引用，并记录这个本地构建调整。不把只装了 runtime 当作已装 targeting pack。
+4. 若旧编译器报语言版本错误，检查 C# 7.3/MSBuild 工具链；这与 csproj 目标 4.7.2 是不同问题。
+5. 即使 v4.7.2 编译成功，DLL 仍在 NX 宿主使用的运行时中执行；编译目标不能降低 NX 2512 的运行环境要求。签名和 Teamcenter 回归仍按本文件执行。
+
+此更新只修改构建选择、产物路径和交接说明，没有改动遍历、截图或测量逻辑。构建脚本使用 UTF-8 BOM，兼容 Windows PowerShell 5.1 对中文脚本的读取。
 
 ## 验证步骤与预期
 
@@ -67,7 +90,7 @@ python .\tests\validate_dlx.py
 dotnet run --project .\tests\CoreTests.csproj -c Release
 ```
 
-第二条需要 .NET 8 SDK，仅用于独立回归程序，不改变插件 net48 目标，也不需要 NuGet 包。没有 Python/SDK 时可先完成 NX 编译，但应在交接结果中记录未运行项。
+第二条需要 .NET 8 SDK，仅用于独立回归程序，与插件所选 Framework 编译目标独立，也不需要 NuGet 包。没有 Python/SDK 时可先完成 NX 编译，但应在交接结果中记录未运行项。
 
 ### 界面
 
@@ -102,6 +125,7 @@ dotnet run --project .\tests\CoreTests.csproj -c Release
 - `python tests/validate_dlx.py` 通过；`git diff --check` 通过。
 - 对比旧 DLX 解析树，除文件标题、日期尾部空白、OK/Cancel 导航外，原属性均保留。12 个插件源文件通过 C# 7.3 语法解析；这不包含 NX SDK 类型检查。
 - 已读取并核对官方 2512 API 链接，见 `docs/NX2512_API_REVIEW.md`。
+- 4.7.2 选项更新：使用 Microsoft 官方 `Microsoft.NETFramework.ReferenceAssemblies.net472` 1.0.3 的 mscorlib/System/System.Core，按 C# 7.3 编译通过两个无 NX 依赖的辅助文件及核心测试程序；未在 Framework 4.7.2 运行时执行该程序，也未编译完整 NX 插件。MSBuild 项目求值确认默认 v4.8、显式 v4.7.2 及相互独立的输出/中间目录。
 - **待本地**：NX SDK 编译/链接、签名、原生 DLX 打开、视图恢复精度、PNG、临时 CSYS 的只读行为、Teamcenter 全部实测。这里没有 NX 运行时，不能将离线检查替代这些结果。
 
 ## 回传并持续维护
