@@ -9,6 +9,10 @@
   <ItemGroup>
     <Compile Include="CoreTests.cs" />
     <Compile Include="PartResourceTests.cs" />
+    <Compile Include="ImageViewTests.cs" />
+    <Compile Include="../NxImageContext.cs" Link="NxImageContext.cs" />
+    <Compile Include="../ImageExporter.cs" Link="ImageExporter.cs" />
+    <Compile Include="../ITransactionHandler.cs" Link="ITransactionHandler.cs" />
     <Compile Include="../BoundingBoxMath.cs" Link="BoundingBoxMath.cs" />
     <Compile Include="../ExportUtilities.cs" Link="ExportUtilities.cs" />
     <Compile Include="../PartLifetime.cs" Link="PartLifetime.cs" />

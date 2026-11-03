@@ -19,6 +19,7 @@ internal sealed class PartLifetime<TKey>
     public void Touch(TKey key) { _touched.Add(key); }
     public bool WasInitial(TKey key) { return _initial.Contains(key); }
     public bool WasTouched(TKey key) { return _touched.Contains(key); }
+    public bool MustRemainLoaded(TKey key) { return _protected.Contains(key) || _pins.ContainsKey(key); }
 
     public void Pin(TKey key)
     {
@@ -37,7 +38,7 @@ internal sealed class PartLifetime<TKey>
 
     public bool CanRelease(TKey key)
     {
-        return !_protected.Contains(key) && !_pins.ContainsKey(key) &&
+        return !MustRemainLoaded(key) &&
             (!_initial.Contains(key) || _touched.Contains(key));
     }
 

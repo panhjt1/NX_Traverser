@@ -8,6 +8,7 @@ using NXOpen.UF;
 
 public sealed class BoundingBoxExporter : ITransactionHandler
 {
+    public bool RequiresPrototypeContext { get { return true; } }
     private readonly string _mode;
     private StreamWriter _writer;
 

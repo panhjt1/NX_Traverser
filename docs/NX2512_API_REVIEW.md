@@ -28,7 +28,7 @@
 | `BlockDialog.Show` | [BlockDialog](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38314.html)，自 NX2206 弃用 | 改 `Launch()`，只接受 `DialogResponse.Ok`；Apply 只验证，取消不执行 |
 | Apply/Initialize 回调 | [Block Styler callbacks](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/nx_api/nxopen_prog_guide/ttj1734216502825/wba1734216502952/block_styler_callbacks.html) | 即使 DLX 只显示 OK/Cancel 也保留必需回调 |
 | `UFSession.UI`、猜测的 `AskSuppressDialogs/SetSuppressDialogs` | [UFSession](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a80986.html)、[UFUi](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a80778.html)：会话属性为 `Ui`，没有原代码猜测的抑制接口 | 删除整段不存在/未证实的调用和反射常量，不使用“吞掉所有对话框”策略 |
-| `SetActiveDisplay`、工作组件恢复 | [PartCollection](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a70134.html) | 用 `ReplaceExisting` + `SameAsDisplay` 建立原型上下文；恢复原 display/work occurrence，使用 `PreserveRefset`；释放加载状态 |
+| `SetActiveDisplay`、工作组件恢复 | [PartCollection](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a70134.html) | 测量/显式旧截图用 `ReplaceExisting` + `SameAsDisplay` 建立原型上下文；默认隔离截图不调用；恢复原 display/work occurrence，使用 `PreserveRefset`；释放加载状态 |
 | 按需加载/只读诊断 | [BasePart](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38266.html)、[ComponentAssembly](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a37866.html) | `OpenComponents(ComponentOnly)`、`LoadThisPartPartially/Fully`；检查加载结果；使用 `IsReadOnly/IsModified` 记录状态 |
 | 包围盒坐标含义 | [UF_MODL_ask_bounding_box_exact](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_modl/global.html#UF_MODL_ask_bounding_box_exact)、[UFModl .NET](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a79234.html) | `Tag.Null` 表示当前 WCS；CSYS 必须位于当前 work part 上下文；八角点必须使用方向向量，不可直接 `min + distances` |
 | ACS/WCS | [UFCsys](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a77982.html)、[UF_CSYS](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_csys/global.html)、[WCS](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a82066.html) | ACS 用临时单位矩阵 CSYS；WCS 使用目标原型的 `WCS.CoordinateSystem.Tag`，直接请求按该坐标系对齐的精确包围盒 |
@@ -42,7 +42,7 @@
 
 **诊断推断**：这些写入/清理/关闭操作遇到只读或已修改的受管部件时，是弹窗的可疑触发点；未连接实际站点，不能断言它们就是每个弹窗的唯一原因。前一版删除这些操作，并在对话框释放后执行。本次根据大装配反馈重新引入有所有权边界的逐个卸载，详见下节。不会签出、保存、改变 Teamcenter ACL、修改发布状态或清除源部件修改标记。
 
-**保留的必要操作**：按需加载、切换显示/工作上下文、临时坐标系、屏幕视图旋转。加载旧版本零件、站点自定义回调和显示切换本身仍可能产生提示或修改标记。官方还说明 `SetActiveDisplay` 可能重置撤销标记列表；恢复 display/work/view 不等于恢复 undo 历史。本地应先在独立测试会话验收。
+**保留的必要操作**：按需加载、临时隔离视图、视图旋转和坐标轴显示开关；测量/显式旧截图仍切换显示/工作上下文，测量仍使用临时坐标系。加载旧版本零件、站点自定义回调和显示切换本身仍可能产生提示或修改标记。官方还说明 `SetActiveDisplay` 可能重置撤销标记列表；恢复 display/work/view 不等于恢复 undo 历史。本地应先在独立测试会话验收。
 
 若仍弹窗，用 `Traversal.log` 最后一条 `[Load geometry]` / `[Context]` / `[BoundingBox]` / `[Orient]` / `[Restore view]` 定位阶段，记录 NX 错误号、弹窗完整文字、2512 maintenance build、该对象是否已发布/被他人签出、当前 work/display 状态及 NX syslog。不要直接加猜测的 suppress API 或强行签出来掩盖问题。
 
@@ -65,21 +65,36 @@
 
 新增独立测试使用 `PartResourceTests.cs` 中明确标记的 NX 测试替身，运行真实资源管理器控制流；验证保护/释放/拒绝关闭分支，不验证 NX SDK 签名、几何生命周期或原生弹窗。后者仍交本地 2512/Teamcenter 验收。
 
-## SetActiveDisplay 内的只读加载状态：本次调整
+## 最新实测：预加载未避开激活提示，截图改为临时隔离
 
-用户最新日志证实逐节点卸载执行，但 `641058` 改由 SetActiveDisplay 的 PartLoadStatus 报告；用户未记录弹窗具体时机。因此，显示切换发生加载相关状态是事实，模态提示是否在该调用内出现仍未证实。
+用户明确指出弹窗出现时最后一条为 `SetActiveDisplay (activate target)` 的 begin；前一条完整加载已经成功，目标为 FullyLoaded、Modified=True。因此确认这一次提示发生在激活调用内，不能继续把显式预加载当作解决方案。此证据只定位到该调用，尚不能区分其中 NX 内部逻辑和站点回调。测量路径保留原型上下文；默认截图路径分离，不再显式完整预加载/激活目标原型。
 
-[SetActiveDisplay](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a70134.html) 的官方返回参数明确包含加载新显示部件时的错误和警告；[LoadThisPartFully](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38266.html) 仅完整加载本部件、不递归加载组件，并返回 PartLoadStatus。基于两者，目标激活路径改为先显式完整加载当前原型并核对 IsFullyLoaded，再 SetActiveDisplay；恢复原显示部件不增加显式预加载。截图后代仍使用部分加载，卸载边界不变。
+| 接口 | 官方 2512 依据及实现边界 |
+|---|---|
+| [ComponentAssembly.CreateIsolateViewWithComponents](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a37866.html) | 创建临时 View，显示给定组件；装配仅一个隔离视图，直至它不再显示。返回 ErrorList 和 View；检查所有 ErrorCode，失败不自动回退到原型激活 |
+| [View](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a81942.html) 的 MakeWork、Matrix、Orient、WcsVisibility、TriadVisibility | MakeWork 选择工作视图，本身不保证视图正显示，因此另查活动视图。Matrix 为模型空间到视图空间旋转。用视图级 bool 开关隐藏 WCS/三重轴并恢复原值，不写全局偏好或 part.WCS.Visibility；未变化的原视图不重复写回矩阵 |
+| [UFAssem.AskTransformOfOcc / AskViewExplosion](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a77634.html) | 取组件 4×4 放置矩阵及当前视图的爆炸状态。对正常旋转应用 C × R逆，使原型方向不受实例放置旋转影响；忽略平移以 Fit 居中。拒绝爆炸、镜像、剪切和非均匀缩放。嵌套实例坐标仍需实机图片比对 |
+| [ViewCollection](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a81946.html) | GetActiveViews、WorkView、IsWorkViewExpanded()、UnexpandWork()；仅接受普通单建模视口，捕获并核对展开状态和工作视图。必须工作部件=显示部件；调用方先退出已有隔离/制图/分屏状态 |
+| [LayoutCollection.Current](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a64322.html)、[Layout.Open/ReplaceView](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a64166.html) | 重开捕获的原布局，若临时建模视图仍显示，则 ReplaceView(old,new,false)，恢复原工作视图。核对原布局 tag、唯一活动视图 tag、工作视图 tag 后才卸载。Open 不支持制图 |
+| [StudioImageCaptureBuilder](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a52978.html) | SourceType.WorkView（自 NX2206）只捕获工作视图；NativeFileBrowser 指定 .png，Custom/Pixels，SetImageDimensionsInteger 的顺序是高度、宽度，因此 [1200,1600]；透明背景、EnhanceEdges、Commit/finally Destroy |
 
-这是有依据的调用顺序调整，**并非文档承诺的无弹窗 API**。完整预加载本身仍可能更新只读旧部件或触发站点回调。配套日志记录调用开始/结束、状态、耗时；准确效果需对同一受管样例实测。
+**文档保证与实现推断分开**：官方保证隔离视图在不再显示时结束其隔离状态；没有找到专门的 EndIsolate 接口。本次使用上述布局/视图公开 API 组成恢复流程并检查结果，未在 NX 本机证实该组合在本站点能完整退出临时视图。单件及连续两轮实机验收必须先于大树运行。恢复失败时停止新加载并保留当前加载集合，避免关闭仍被视图引用的组件；不承诺已验证彻底无弹窗。
 
-本次还核对了以下候选，但未作为屏蔽方案：
+图片采用首次匹配实例的当前参考集、布置和隐藏状态，可能与旧原型激活截图和原型完整几何测量范围不同。`useIsolatedImageView=false` 可显式对比旧截图，仍有只读提示风险。两条路径都隐藏 WCS/三重轴并恢复原开关；八个方向、自动适配、透明背景和边缘增强沿用原功能。禁止为减少提示直接删除这些输出特性。
 
-- [UI.UserInterfacePreferences](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a81018.html) 的 [DisplayAlertsOnWarnings](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a72018.html)：文档范围是特征创建/编辑/更新中的诊断警告，错误始终显示。它不是已证实的只读消息开关，因此不改用户偏好。
-- [MessageBoxTester](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38486.html)：是自动化测试消息验证接口，相关方法要求 NX Automated Testing Studio 许可；SuppressAllQuestionMessageBox 会选择问题框答案，不能作为本插件通用方案。
-- [CreateIsolateViewWithComponents](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a37866.html)：确有临时隔离视图创建接口，但尚未核实完整退出/恢复及多视角截图生命周期，本次不引入未经核实的替代实现。
+未采用的屏蔽候选：
 
-独立控制流测试新增预加载先于激活、预加载失败不切换、原显示恢复和混合错误检查。使用测试替身，不验证 NX 的原生弹窗、加载副作用或几何正确性。
+- [UI.UserInterfacePreferences](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a81018.html) / [DisplayAlertsOnWarnings](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a72018.html) 的文档范围为特征创建/编辑/更新诊断，不是已证实的只读通知开关。
+- [MessageBoxTester](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38486.html) 要求 Automated Testing Studio 许可；自动选择问题框答案不适合作为通用插件策略。
+- 不使用已退役的 SetWorkPartQuietly，不用 UF SetDisplayPart 替换后就假定没有相同显示副作用。
+
+## 关闭后的 3615013：失效对象与会话复核
+
+用户日志在 Close 已返回成功后立即报“试图使用不活动的对象”，随后父节点清理仍将 LoadedParts 降回 1。代码审查发现：旧循环跨 Close 保留整个 BasePart[]，下一个对象可能已被关闭连带失效。这是与日志吻合的实现缺陷，不能把这一次异常直接认定为未释放。
+
+改为跨调用只保留 tag/名称，下一候选从当前 Parts.ToArray 重新取得。每次关闭后再枚举：目标消失则记为释放；只在目标确已消失时容忍关闭抛出的 3615013，仍在会话或其他错误均停止。同时检查受保护/活动祖先是否意外消失。没有把 3615013 全局吞掉，也没有扩大关闭范围。
+
+测试替身专门模拟父关闭使子包装对象无效、关闭后抛 3615013、关闭前抛且目标仍存在；真实 NX 关闭行为仍需本地复核。
 
 ## 其他审查修复及边界
 
@@ -91,8 +106,8 @@
 - 已按本次用户要求改为逐节点卸载临时部件，保护用户原有完整加载/已修改/活动部件及递归祖先；详见下节。默认遍历深度仍为 5，可通过 `maxDepth` 调整。单个匹配大装配及 NX 缓存仍可能造成较高峰值，需实测。
 - 当前取消为外部调用 `AssemblyTraverser.RequestStop()` 的协作式取消；仓库没有停止窗口，不承诺 ESC 可以终止阻塞的 NX API 调用。
 - 每次输出到新的子目录，CSV 首五列兼容原字段，新增单位/坐标系/范围/实体数；名称转义、小数点固定、中文 UTF-8 BOM、PNG 文件名防冲突。
-- 为减少源部件状态修改，图片保留当前 WCS/三轴可见性；需要无坐标轴截图时，在用户可控的会话设置中预先调整并做本地验证。
+- 恢复截图隐藏 WCS/三重轴的原有特性，改用 View 局部开关并在 finally 恢复原值；不恢复原版强制开关为固定值的副作用，不执行源几何清理。
 
 ## 验证边界
 
-本次已执行 DLX/XML/映射检查及不依赖 NX 的 C# 数学/文本回归检查。未执行 NX SDK 全量编译、NX 原生 DLX 加载、PNG 渲染、Teamcenter 实机测试或本地签名；这些由 [本地 agent 交接](../LOCAL_AGENT_PROMPT.md) 列出。纯算法测试通过不等于 NX 2512 集成验收通过。
+本次已执行 DLX/XML/映射检查及 108 项独立 C# 断言。数学/文本/所有权策略之外，真实资源管理器、显示上下文、截图代码与显式 NX 测试替身组合编译并验证控制流；替身不证明官方 API 签名或原生行为。还以官方 net472 框架引用完成同一测试程序的编译，未在 Framework 4.7.2 运行。未执行 NX SDK 全量编译、NX 原生 DLX 加载、PNG 渲染、Teamcenter 实机测试或本地签名；这些由 [本地 agent 交接](../LOCAL_AGENT_PROMPT.md) 列出。纯算法测试通过不等于 NX 2512 集成验收通过。

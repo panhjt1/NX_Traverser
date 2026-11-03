@@ -16,6 +16,10 @@ public class TraversalConfig
     
     public string coordinateSelection { get; set; }
 
+    // Default screenshot path avoids making read-only prototypes active.
+    // False explicitly selects the legacy prototype-display path (may prompt).
+    public bool useIsolatedImageView { get; set; }
+
     // Root is level 0. Retain the original limit, now configurable.
     public int maxDepth { get; set; }
     
@@ -28,6 +32,7 @@ public class TraversalConfig
         flagXYZOn = false;
         viewList = new ImageExporter.SnapViewType[0];
         coordinateSelection = "ACS";
+        useIsolatedImageView = true;
         maxDepth = 5;
     }
 

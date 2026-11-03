@@ -26,18 +26,19 @@ DLX 已修复 XML 声明位置并保留原始控件 schema。其 `NX="1946"` 标
 
 - 名称读取 `DB_PART_NAME`，缺失时使用组件显示名；名称/ID 通配符列表按 OR 匹配，支持 `*`、`?`。空白行忽略；无过滤时处理叶子。
 - 相同原型只导出一次；匹配装配后不会再单独导出后代。根节点深度为 0，最大深度默认 5，可通过 `TraversalConfig.maxDepth` 调整。
-- 八个 PNG 视角：Trimetric、Isometric、Top、Front、Right、Back、Bottom、Left。透明背景；保留当前 WCS/三轴显示状态，结束恢复原视图。
+- 八个 PNG 视角：Trimetric、Isometric、Top、Front、Right、Back、Bottom、Left。默认 1600×1200 透明 PNG、边缘增强、自动适配；截图隐藏 WCS 和三重轴，成功/失败/取消后恢复各自原有可见性及视图。
+- 默认在工作/显示装配内创建临时隔离视图，不激活目标原型。图片采用首次匹配实例的当前参考集、布置和可见状态，补偿实例旋转以保持原型视角方向。需要普通单建模视口、工作部件与显示部件相同，运行前退出已有隔离/爆炸/制图/分屏视图；镜像、剪切或非均匀缩放实例报错。此路径的原生渲染和退出仍需本地先做单件验收。
 - 包围盒按**目标原型的 ACS/WCS**测量。选中子装配时包含未抑制后代实体在该子装配中的放置；不是顶层装配的每实例坐标报表。参考集缺体、未完整加载或任一实体计算失败时，记录失败而不写不完整尺寸。
 - 每次新建 `NX_Traverser_日期_时间_随机后缀` 子目录，含 PNG、`BoundingBoxResult.csv`（有成功测量时）及 `Traversal.log`，保留以前结果。
 - CSV 首五列为 `零件名,ID,x,y,z`，后接 `单位,坐标系,范围,实体数`；使用 UTF-8 BOM、固定小数点及标准引号转义。
 
 ## Teamcenter 只读处理
 
-显示切换前先完整预加载当前目标原型、检查状态，再激活；截图后代仍只请求部分加载的显示数据，不再为统计实体而完整加载全部后代特征。精确测量仍要求完整几何。`641058` 记录为只读加载警告，再检查实际加载状态；`641070` 等其他状态仍按失败处理。只有 OK 成功提交且 Block Styler 对话框释放后才执行任务，取消不会执行旧配置。不保存、不签出、不修改权限、不清除模型修改标记。
+用户实测确认：目标完整加载后，`SetActiveDisplay` 内仍会弹只读提示，预加载未解决。因此默认截图改为临时隔离组件，用 `StudioImageCaptureBuilder.Source=WorkView` 只导出隔离视图；不调用目标原型的 `SetActiveDisplay` 或显式完整预加载。精确测量仍使用完整几何与原型激活，组合运行也可能弹窗。`641058` 记录为警告并检查实际加载状态；`641070` 等其他状态仍失败。不保存、不签出、不修改权限、不清除修改标记。
 
 每个遍历节点在恢复上下文后释放临时加载部件，失败/取消路径也清理。原先干净的部分/最小加载部件被本次使用或提升加载后也允许卸载；原有完整加载、已修改、显示/工作部件及正在遍历的祖先会保留。逐个关闭并丢弃本次临时内存变化，不递归关闭整树；关闭失败则停止继续加载。日志记录关闭前后和进程私有内存。单个匹配大装配仍需容纳该装配的数据，NX 缓存也可能使进程内存不立即下降。
 
-预加载顺序调整旨在减少显示切换内部的隐式加载，是否减少只读弹窗仍待实测，不保证所有 NX/Teamcenter 站点回调无弹窗。加载/切换/关闭日志增加成对 begin/end 和耗时，供本地定位阻塞阶段。保留的原有部件若被加载/显示操作标为已修改，仍可能在返回界面后提示。显示切换可能重置 undo 标记；不会为回收内存删除全部用户撤销记录。具体原因和 API 依据见 [NX2512_API_REVIEW.md](docs/NX2512_API_REVIEW.md)。
+关闭后重新枚举会话，不访问被父部件关闭连带失效的旧对象；只有确认目标已离开会话才容忍关闭时的 3615013。隔离视图退出后核对原布局和工作视图，恢复失败则停止并保留当前加载集合，避免在视图仍引用组件时继续卸载。没有验证到保证所有 NX/Teamcenter 回调无弹窗的公开开关。日志保留成对 begin/end；显示切换可能重置 undo 标记，不删除用户撤销记录。具体 API 依据见 [NX2512_API_REVIEW.md](docs/NX2512_API_REVIEW.md)。
 
 ## 直接调用
 
@@ -49,6 +50,7 @@ AssemblyTraverser.Run(new TraversalConfig {
     namePatterns = new[] { "*总成*" },
     idPatterns = new string[0],
     flagImageOn = true,
+    useIsolatedImageView = true,
     viewList = new[] { ImageExporter.SnapViewType.Isometric, ImageExporter.SnapViewType.Top },
     flagXYZOn = true,
     coordinateSelection = "WCS",
@@ -57,6 +59,8 @@ AssemblyTraverser.Run(new TraversalConfig {
 ```
 
 `AssemblyTraverser.RequestStop()` 仅为外部协作式取消接口，不能中断正在阻塞的 NX API；本仓库不包含停止窗口。
+
+`useIsolatedImageView=false` 可显式选择旧原型激活截图以对比图片，可能重现只读提示；不会在隔离失败时自动回退。此配置目前为代码选项，没有新增 DLX 控件。隔离截图的实例参考集范围可能与原型完整几何测量范围不同。
 
 ## 独立检查
 

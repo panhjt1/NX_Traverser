@@ -85,7 +85,38 @@ internal static class PartResourceTests
             throwing.ThrowOnClose = false;
         }
         CheckDisplayContext();
+        CheckInvalidationDuringClose();
         return _checks;
+    }
+
+    private static void CheckInvalidationDuringClose()
+    {
+        AssemblyTraverser.Stopped = false;
+        var session = new Session();
+        Part root = session.Add("root", PartLoadState.FullyLoaded);
+        session.Parts.BaseWork = root;
+        session.Parts.Displayed.Add(root);
+        using (var resources = new NxPartResources(session))
+        {
+            NxPartResources.BeforeLoad(null);
+            Part child = session.Add("dependency", PartLoadState.PartiallyLoaded);
+            Part parent = session.Add("assembly", PartLoadState.FullyLoaded);
+            parent.ReleaseWithClose = child; // Parent is visited first in this enumeration.
+            Check(resources.ReleaseUnused("cascade"), "Implicit dependent release must not read an inactive wrapper");
+            Check(parent.Closed && child.Closed && !AssemblyTraverser.Stopped, "Cascade release completes without false stop");
+
+            NxPartResources.BeforeLoad(null);
+            Part ended = session.Add("inactive after close", PartLoadState.PartiallyLoaded);
+            ended.InactiveAfterClose = true;
+            Check(resources.ReleaseUnused("inactive but gone"), "Ignore 3615013 only after confirming disappearance");
+
+            NxPartResources.BeforeLoad(null);
+            Part live = session.Add("inactive but still loaded", PartLoadState.PartiallyLoaded);
+            live.InactiveBeforeClose = true;
+            Check(!resources.ReleaseUnused("inactive but live") && AssemblyTraverser.Stopped, "Do not swallow 3615013 while part remains loaded");
+            live.InactiveBeforeClose = false;
+        }
+        Check(session.Parts.Items.Count == 1 && !root.Closed, "Final sweep leaves protected root intact");
     }
 
     private static void CheckDisplayContext()
@@ -123,6 +154,11 @@ internal static class PartResourceTests
 
 namespace NXOpen
 {
+    public class NXException : Exception
+    {
+        public int ErrorCode { get; private set; }
+        public NXException(int code) : base("Simulated NX error") { ErrorCode = code; }
+    }
     public enum Tag { Null }
     public enum PartLoadState { NotLoaded, FullyLoaded, PartiallyLoaded, MinimallyLoaded }
     public enum DisplayPartOption { ReplaceExisting }
@@ -142,23 +178,43 @@ namespace NXOpen
         public enum CloseModified { CloseModified }
         internal Session Owner;
         public Tag Tag;
-        public string Name;
-        public bool IsModified;
+        private string _name;
+        private bool _modified;
+        private PartLoadState _state;
+        private void CheckAlive() { if (Closed) throw new NXException(3615013); }
+        public string Name { get { CheckAlive(); return _name; } set { _name = value; } }
+        public bool IsModified { get { CheckAlive(); return _modified; } set { _modified = value; } }
         public bool IsReadOnly = true;
-        public PartLoadState PartLoadState;
+        public PartLoadState PartLoadState { get { CheckAlive(); return _state; } set { _state = value; } }
         public bool IsFullyLoaded { get { return PartLoadState == PartLoadState.FullyLoaded; } }
         public bool Closed, RefuseClose, ThrowOnClose, ThrowOnLoad;
+        public bool InactiveBeforeClose, InactiveAfterClose;
+        public BasePart ReleaseWithClose;
         public void Close(CloseWholeTree tree, CloseModified modified, object responses)
         {
             if (tree != CloseWholeTree.False || modified != CloseModified.CloseModified || responses != null)
                 throw new Exception("Unexpected close options");
             if (ThrowOnClose) throw new Exception("Simulated NX close error");
+            if (InactiveBeforeClose) throw new NXException(3615013);
             if (RefuseClose) return;
             Closed = true;
             Owner.Parts.Items.Remove(this);
+            if (ReleaseWithClose != null)
+            {
+                ReleaseWithClose.Closed = true;
+                Owner.Parts.Items.Remove(ReleaseWithClose);
+            }
+            if (InactiveAfterClose) throw new NXException(3615013);
         }
     }
-    public sealed class Part : BasePart { }
+    public sealed class Part : BasePart
+    {
+        public string FullPath { get { return Name; } }
+        public ViewCollection Views;
+        public ViewCollection ModelingViews { get { return Views; } }
+        public LayoutCollection Layouts;
+        public Assemblies.ComponentAssembly ComponentAssembly;
+    }
     public sealed class PartCollection
     {
         public enum SdpsStatus { Ok }
@@ -197,6 +253,8 @@ namespace NXOpen
         private int _next;
         public readonly PartCollection Parts = new PartCollection();
         public readonly List<string> Calls = new List<string>();
+        public readonly DisplayManager DisplayManager = new DisplayManager();
+        public Action<View> CaptureObserver;
         public Part Add(string name, PartLoadState state, bool modified = false)
         {
             var part = new Part { Owner = this, Tag = (Tag)(++_next), Name = name, PartLoadState = state, IsModified = modified };
@@ -212,11 +270,14 @@ namespace NXOpen.Assemblies
         public Component Parent;
         public Part OwningPart;
         public object Prototype;
+        public Tag Tag;
+        public string DisplayName = "test occurrence";
     }
 }
 internal static class AssemblyTraverser
 {
     public static bool Stopped;
+    public static bool StopRequested { get { return Stopped; } }
     public static void RequestStop() { Stopped = true; }
 }
 internal static class RunLog
@@ -229,6 +290,7 @@ internal static class RunLog
 // validated by this double. NxPartContext itself is compiled from production.
 internal static class NxGeometry
 {
+    public static void PrepareDisplay(Part part) { }
     public static void LoadFully(Part part)
     {
         part.Owner.Calls.Add("load " + part.Name);

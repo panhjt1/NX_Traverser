@@ -57,6 +57,11 @@ internal sealed class NxPartResources : IDisposable
     }
 
     public void Pin(Part part) { _lifetime.Pin(part.Tag); }
+    public static void KeepCurrentPartsOpen()
+    {
+        if (_current == null) return;
+        foreach (BasePart part in _current._session.Parts.ToArray()) _current.Protect(part);
+    }
     public void Unpin(Tag key)
     {
         _lifetime.Unpin(key);
@@ -75,45 +80,58 @@ internal sealed class NxPartResources : IDisposable
             var active = new HashSet<Tag>();
             foreach (BasePart part in _session.Parts.GetDisplayedParts()) active.Add(part.Tag);
             if (_session.Parts.BaseWork != null) active.Add(_session.Parts.BaseWork.Tag);
-            BasePart[] loaded = _session.Parts.ToArray();
-            var attempted = new Dictionary<Tag, string>();
-            // Close individually, never a whole tree: shared and protected
-            // descendant prototypes must not be swept up by a recursive close.
-            for (int i = loaded.Length - 1; i >= 0; --i)
+            var required = new Dictionary<Tag, string>();
+            List<KeyValuePair<Tag, string>> candidates = FindCandidates(active, required);
+            // A close can invalidate other BasePart wrappers too. Retain only
+            // primitive keys/names across close calls, and reacquire each part.
+            foreach (KeyValuePair<Tag, string> candidate in candidates)
             {
-                BasePart part = loaded[i];
-                Tag key = part.Tag;
-                // Include clean partial/minimal parts promoted implicitly by NX.
-                PartLoadState initialState;
-                if (_initialLoadState.TryGetValue(key, out initialState) && initialState != part.PartLoadState &&
-                    (part.PartLoadState == PartLoadState.FullyLoaded || part.PartLoadState == PartLoadState.PartiallyLoaded))
-                    _lifetime.Touch(key);
-                if (!_lifetime.CanRelease(key) || active.Contains(key)) continue;
-                string name = part.Name;
-                try
+                Tag key = candidate.Key;
+                string name = candidate.Value;
+                BasePart part = FindLoadedPart(key);
+                bool alreadyReleased = part == null;
+                Exception closeError = null;
+                if (part != null)
                 {
-                    RunLog.Write("[Unload begin] " + name + " Modified=" + part.IsModified);
-                    RunLog.NxCall("Close " + name, () =>
-                        part.Close(BasePart.CloseWholeTree.False, BasePart.CloseModified.CloseModified, null));
-                    attempted.Add(key, name);
+                    try
+                    {
+                        RunLog.Write("[Unload begin] " + name + " Modified=" + part.IsModified);
+                        RunLog.NxCall("Close " + name, () =>
+                            part.Close(BasePart.CloseWholeTree.False, BasePart.CloseModified.CloseModified, null));
+                    }
+                    catch (Exception ex) { closeError = ex; }
                 }
-                catch (Exception ex) { ok = false; RunLog.Error("Unload " + name, ex); }
-            }
-            var remaining = new HashSet<Tag>();
-            foreach (BasePart part in _session.Parts.ToArray()) remaining.Add(part.Tag);
-            foreach (KeyValuePair<Tag, string> entry in attempted)
-            {
-                if (remaining.Contains(entry.Key))
+
+                var remaining = new HashSet<Tag>();
+                foreach (BasePart current in _session.Parts.ToArray()) remaining.Add(current.Tag);
+                bool gone = !remaining.Contains(key);
+                var nxError = closeError as NXException;
+                // Ignore an inactive-object error ONLY when a fresh enumeration
+                // proves this specific part is gone. Do not swallow other errors.
+                if (closeError != null && !(gone && nxError != null && nxError.ErrorCode == 3615013))
                 {
                     ok = false;
-                    RunLog.Write("[ERROR] 关闭后部件仍在会话中: " + entry.Value);
+                    RunLog.Error("Unload " + name, closeError);
+                }
+                if (gone)
+                {
+                    ++closed;
+                    _lifetime.Released(key);
+                    RunLog.Write("[Unload done] " + name +
+                        (alreadyReleased ? "（已随前一次关闭释放）" : closeError != null ? "（已确认不在会话中）" : ""));
                 }
                 else
                 {
-                    ++closed;
-                    _lifetime.Released(entry.Key);
-                    RunLog.Write("[Unload done] " + entry.Value);
+                    ok = false;
+                    RunLog.Write("[ERROR] 关闭后部件仍在会话中: " + name);
                 }
+                foreach (KeyValuePair<Tag, string> entry in required)
+                {
+                    if (remaining.Contains(entry.Key)) continue;
+                    RunLog.Write("[ERROR] NX 意外卸载了受保护部件: " + entry.Value);
+                    ok = false;
+                }
+                if (!ok) break;
             }
         }
         catch (Exception ex) { ok = false; RunLog.Error("释放部件 " + stage, ex); }
@@ -124,6 +142,32 @@ internal sealed class NxPartResources : IDisposable
             RunLog.Write("[STOP] 部件未能释放，停止继续加载以免内存持续增长。");
         }
         return ok;
+    }
+
+    private List<KeyValuePair<Tag, string>> FindCandidates(HashSet<Tag> active, Dictionary<Tag, string> required)
+    {
+        var result = new List<KeyValuePair<Tag, string>>();
+        BasePart[] parts = _session.Parts.ToArray();
+        for (int i = parts.Length - 1; i >= 0; --i)
+        {
+            BasePart part = parts[i];
+            Tag key = part.Tag;
+            PartLoadState initialState;
+            PartLoadState state = part.PartLoadState;
+            if (_initialLoadState.TryGetValue(key, out initialState) && initialState != state &&
+                (state == PartLoadState.FullyLoaded || state == PartLoadState.PartiallyLoaded))
+                _lifetime.Touch(key);
+            if (_lifetime.MustRemainLoaded(key) || active.Contains(key)) required.Add(key, part.Name);
+            else if (_lifetime.CanRelease(key)) result.Add(new KeyValuePair<Tag, string>(key, part.Name));
+        }
+        return result;
+    }
+
+    private BasePart FindLoadedPart(Tag key)
+    {
+        foreach (BasePart part in _session.Parts.ToArray())
+            if (part.Tag == key) return part;
+        return null;
     }
 
     private void LogMemory(string stage, int closed)

@@ -21,7 +21,7 @@ public sealed class AssemblyTraverser
         _config = config;
         // Measure first: a screenshot error must not prevent measurements.
         if (config.flagXYZOn) _handlers.Add(new BoundingBoxExporter(config.coordinateSelection));
-        if (config.flagImageOn) _handlers.Add(new ImageExporter(config.viewList));
+        if (config.flagImageOn) _handlers.Add(new ImageExporter(config.viewList, config.useIsolatedImageView));
     }
 
     public static void Run(TraversalConfig config)
@@ -55,6 +55,9 @@ public sealed class AssemblyTraverser
             RunLog.Write("输出目录: " + output);
             RunLog.Write("每个匹配原型导出一次；匹配装配后不再单独导出其后代。坐标系=" + _config.coordinateSelection);
             RunLog.Write("逐节点释放临时加载部件；保留原有完整加载/已修改/活动部件。原有干净部分加载部件被本次使用后可卸载。");
+            if (_config.flagImageOn) RunLog.Write("截图模式=" + (_config.useIsolatedImageView ?
+                "装配内临时隔离；隐藏 WCS/三重轴；按当前组件参考集显示" : "原型显示激活（可能出现只读提示）"));
+            if (_config.flagXYZOn) RunLog.Write("精确测量仍需原型上下文，可能触发只读部件激活提示。");
             try
             {
                 using (_resources = new NxPartResources(session))
@@ -111,20 +114,20 @@ public sealed class AssemblyTraverser
                 bool wasModified = part.IsModified;
                 try
                 {
-                    using (var context = new NxPartContext(session, part))
+                    foreach (ITransactionHandler handler in _handlers)
                     {
-                        foreach (ITransactionHandler handler in _handlers)
+                        if (StopRequested) break;
+                        string stage = handler.GetType().Name + " " + id;
+                        try
                         {
-                            if (StopRequested) break;
-                            string stage = handler.GetType().Name + " " + id;
-                            try
+                            RunLog.Write("[Begin] " + stage);
+                            using (var context = handler.RequiresPrototypeContext ? new NxPartContext(session, part) : null)
                             {
-                                RunLog.Write("[Begin] " + stage);
                                 handler.Process(comp, session, output, id + "_" + name);
-                                ++_completed;
                             }
-                            catch (Exception ex) { ++_failed; RunLog.Error(stage, ex); }
+                            ++_completed;
                         }
+                        catch (Exception ex) { ++_failed; RunLog.Error(stage, ex); }
                     }
                 }
                 finally
