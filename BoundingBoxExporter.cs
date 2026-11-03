@@ -1,383 +1,92 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using NXOpen;
 using NXOpen.Assemblies;
 using NXOpen.UF;
 
-/// <summary>
-/// 包容体尺寸导出事务类 - 查询部件包围盒尺寸并写入CSV文件
-/// </summary>
-public class BoundingBoxExporter : ITransactionHandler
+public sealed class BoundingBoxExporter : ITransactionHandler
 {
-    private static readonly string CsvFileName = "BoundingBoxResult.csv";
-    
-    private string _csysMode;
-    private StreamWriter _csvWriter;
-    private bool _headerWritten;
+    private readonly string _mode;
+    private StreamWriter _writer;
 
-    public BoundingBoxExporter(string csysMode)
+    public BoundingBoxExporter(string mode)
     {
-        _csysMode = string.IsNullOrEmpty(csysMode) ? "ACS" : csysMode;
-        _csvWriter = null;
-        _headerWritten = false;
+        _mode = ExportUtilities.NormalizeCoordinateMode(mode);
     }
 
-    /// <summary>
-    /// 处理包容体尺寸导出事务
-    /// </summary>
-    public void Process(Component comp, Session theSession, string outputFolder, string descriptiveName)
+    public void Process(Component comp, Session session, string outputFolder, string descriptiveName)
     {
         Part part = comp.Prototype as Part;
-        if (part == null)
-        {
-            theSession.ListingWindow.WriteLine(string.Format("    【错误】无法获取零件原型: {0}", comp.DisplayName));
-            return;
-        }
-
+        if (part == null || session.Parts.Work != part || session.Parts.Display != part)
+            throw new InvalidOperationException("测量必须在目标原型部件上下文中执行。");
+        List<Tag> bodies = NxGeometry.CollectBodyTags(part);
+        if (bodies.Count == 0) throw new InvalidOperationException("没有可测量实体。");
+        UFSession uf = UFSession.GetUFSession();
+        Tag temporaryCsys = Tag.Null, temporaryMatrix = Tag.Null;
+        var origin = new double[3];
+        var axes = new double[] { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+        var box = new BoundingBoxMath();
         try
         {
-            // 计算实体数量
-            int bodyCount = 0;
-            BodyCollection bodies = part.Bodies;
-            foreach (Body body in bodies)
+            Tag csys;
+            if (_mode == "WCS")
             {
-                bodyCount++;
+                csys = part.WCS.CoordinateSystem.Tag;
+                Tag matrix;
+                uf.Csys.AskCsysInfo(csys, out matrix, origin);
+                uf.Csys.AskMatrixValues(matrix, axes);
             }
-
-            // 检查并记录加载状态
-            theSession.ListingWindow.WriteLine(string.Format("    正在处理: {0} | 完全加载={1} | 实体数={2}",
-                part.Name, part.IsFullyLoaded, bodyCount));
-
-            // 如果不是完全加载，尝试强制加载
-            if (!part.IsFullyLoaded)
+            else
             {
-                theSession.ListingWindow.WriteLine(string.Format("    -> 尝试加载几何数据..."));
-                try
-                {
-                    part.LoadThisPartFully();
-                    // 重新计算实体数量
-                    bodyCount = 0;
-                    foreach (Body body in bodies)
-                    {
-                        bodyCount++;
-                    }
-                    theSession.ListingWindow.WriteLine(string.Format("    -> 加载完成，实体数={0}", bodyCount));
-                }
-                catch (Exception loadEx)
-                {
-                    theSession.ListingWindow.WriteLine(string.Format("    -> 加载失败: {0}", loadEx.Message));
-                }
+                // NULL_TAG means current WCS, NOT absolute coordinates.
+                // A temporary identity CSYS avoids changing/saving the source WCS.
+                uf.Csys.CreateMatrix(axes, out temporaryMatrix);
+                uf.Csys.CreateTempCsys(origin, temporaryMatrix, out temporaryCsys);
+                csys = temporaryCsys;
             }
-
-            // 获取包围盒尺寸
-            double[] dimensions = GetBoundingBoxDimensions(part, theSession);
-            if (dimensions == null)
+            foreach (Tag body in bodies)
             {
-                theSession.ListingWindow.WriteLine(string.Format("    【警告】无法获取包围盒尺寸: {0}", comp.DisplayName));
-                return;
+                if (AssemblyTraverser.StopRequested) throw new OperationCanceledException("遍历已停止。");
+                var corner = new double[3];
+                var directions = new double[3, 3];
+                var distances = new double[3];
+                RunLog.Write("[BoundingBox " + _mode + "] body=" + body);
+                uf.Modl.AskBoundingBoxExact(body, csys, corner, directions, distances);
+                // Query aligned geometry directly; rotating an ACS AABB is not exact.
+                box.Add(corner, directions, distances, origin, axes);
             }
-
-            // 写入CSV
-            WriteToCsv(outputFolder, comp, dimensions, theSession);
         }
-        catch (Exception ex)
+        finally
         {
-            theSession.ListingWindow.WriteLine(string.Format("    【处理失败】{0}: {1}", comp.DisplayName, ex.Message));
+            // Only delete temporary objects created here; never delete the actual WCS.
+            try { if (temporaryCsys != Tag.Null) uf.Obj.DeleteObject(temporaryCsys); }
+            finally { if (temporaryMatrix != Tag.Null) uf.Obj.DeleteObject(temporaryMatrix); }
         }
+        double[] dimensions = box.Dimensions();
+        if (_writer == null)
+        {
+            _writer = new StreamWriter(Path.Combine(outputFolder, "BoundingBoxResult.csv"), false, new UTF8Encoding(true));
+            _writer.WriteLine("零件名,ID,x,y,z,单位,坐标系,范围,实体数");
+        }
+        _writer.WriteLine(string.Join(",", new[] {
+            ExportUtilities.CsvCell(AssemblyTraverserUtils.GetDescriptiveName(comp)),
+            ExportUtilities.CsvCell(comp.DisplayName),
+            ExportUtilities.Dimension(dimensions[0]), ExportUtilities.Dimension(dimensions[1]), ExportUtilities.Dimension(dimensions[2]),
+            ExportUtilities.CsvCell(part.PartUnits.ToString()), _mode, "PrototypeWithDescendants",
+            bodies.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        }));
+        _writer.Flush();
+        RunLog.Write("[Dimensions] " + comp.DisplayName + " " + string.Join(" x ", new[] {
+            ExportUtilities.Dimension(dimensions[0]), ExportUtilities.Dimension(dimensions[1]), ExportUtilities.Dimension(dimensions[2])
+        }) + " " + part.PartUnits + " " + _mode);
     }
 
-    /// <summary>
-    /// 根据配置获取包围盒尺寸（入口方法）
-    /// </summary>
-    private double[] GetBoundingBoxDimensions(Part part, Session theSession)
-    {
-        switch (_csysMode.ToUpper())
-        {
-            case "WCS":
-                return GetBoundingBoxWCS(part, theSession);
-            case "ACS":
-            default:
-                return GetBoundingBoxACS(part, theSession);
-        }
-    }
-
-    /// <summary>
-    /// 使用 ACS 坐标系 + AskBoundingBoxExact 获取精确包围盒
-    /// </summary>
-    private double[] GetBoundingBoxACS(Part part, Session theSession)
-    {
-        var ufSession = UFSession.GetUFSession();
-
-        try
-        {
-            // 获取 ACS 坐标系 Tag（null 表示 ACS）
-            Tag acsTag = Tag.Null;
-
-            // 获取部件中的所有实体(Body)
-            BodyCollection bodies = part.Bodies;
-
-            // 初始化整体包围盒
-            double overallMinX = double.MaxValue, overallMinY = double.MaxValue, overallMinZ = double.MaxValue;
-            double overallMaxX = double.MinValue, overallMaxY = double.MinValue, overallMaxZ = double.MinValue;
-            bool hasValidBody = false;
-
-            // 遍历所有实体
-            foreach (Body body in bodies)
-            {
-                if (body.Tag == Tag.Null)
-                    continue;
-
-                try
-                {
-                    // 使用精确版本获取包围盒
-                    double[] minCorner = new double[3];
-                    double[,] directions = new double[3, 3];
-                    double[] distances = new double[3];
-
-                    ufSession.Modl.AskBoundingBoxExact(body.Tag, acsTag, minCorner, directions, distances);
-
-                    // 获取实体名称（用于诊断日志）
-                    string bodyName = "";
-                    try { bodyName = body.Name; } catch { }
-                    
-                    // 检查是否有特异值（任一方向绝对值>1e6），有则跳过该实体
-                    if (Math.Abs(distances[0]) > 1e6 || Math.Abs(distances[1]) > 1e6 || Math.Abs(distances[2]) > 1e6 ||
-                        Math.Abs(minCorner[0]) > 1e6 || Math.Abs(minCorner[1]) > 1e6 || Math.Abs(minCorner[2]) > 1e6)
-                    {
-                        theSession.ListingWindow.WriteLine(string.Format(
-                            "        【跳过特异实体】Tag={0} Name='{1}': X={2:F3} Y={3:F3} Z={4:F3} | 位置({5:F1},{6:F1},{7:F1})",
-                            body.Tag, bodyName, distances[0], distances[1], distances[2],
-                            minCorner[0], minCorner[1], minCorner[2]));
-                        continue;  // 跳过该实体，不参与包围盒计算
-                    }
-
-                    // 计算最大角点
-                    double maxX = minCorner[0] + distances[0];
-                    double maxY = minCorner[1] + distances[1];
-                    double maxZ = minCorner[2] + distances[2];
-
-                    // 更新整体包围盒
-                    overallMinX = Math.Min(overallMinX, minCorner[0]);
-                    overallMinY = Math.Min(overallMinY, minCorner[1]);
-                    overallMinZ = Math.Min(overallMinZ, minCorner[2]);
-                    overallMaxX = Math.Max(overallMaxX, maxX);
-                    overallMaxY = Math.Max(overallMaxY, maxY);
-                    overallMaxZ = Math.Max(overallMaxZ, maxZ);
-
-                    hasValidBody = true;
-                }
-                catch (Exception ex)
-                {
-                    // 该实体无法获取包围盒（轻量化体），跳过
-                    theSession.ListingWindow.WriteLine(string.Format("        跳过实体: {0}", ex.Message));
-                    continue;
-                }
-            }
-
-            // 检查是否有有效实体
-            if (!hasValidBody)
-            {
-                theSession.ListingWindow.WriteLine(string.Format("      没有可获取包围盒的实体（可能都是轻量化体）"));
-                return null;
-            }
-
-            // 计算 XYZ 尺寸
-            double xSize = overallMaxX - overallMinX;
-            double ySize = overallMaxY - overallMinY;
-            double zSize = overallMaxZ - overallMinZ;
-
-            return new double[] { xSize, ySize, zSize };
-        }
-        catch (Exception ex)
-        {
-            theSession.ListingWindow.WriteLine(string.Format("      获取ACS包围盒异常: {0}", ex.Message));
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// 使用 WCS 坐标系 + AskBoundingBoxExact + 坐标转换获取精确包围盒
-    /// </summary>
-    private double[] GetBoundingBoxWCS(Part part, Session theSession)
-    {
-        var ufSession = UFSession.GetUFSession();
-
-        try
-        {
-            // 获取 WCS 坐标系 Tag
-            Tag wcsTag = part.WCS.Tag;
-
-            // 获取 WCS 原点和矩阵（用于坐标转换）
-            double[] wcsOrigin = new double[3];
-            Tag wcsMatrixTag;
-            ufSession.Csys.AskCsysInfo(wcsTag, out wcsMatrixTag, wcsOrigin);
-            double[] wcsMatrix = new double[9];
-            ufSession.Csys.AskMatrixValues(wcsMatrixTag, wcsMatrix);
-            // wcsMatrix[0-2]=X轴, [3-5]=Y轴, [6-8]=Z轴（在ACS下的分量）
-
-            // 获取部件中的所有实体(Body)
-            BodyCollection bodies = part.Bodies;
-
-            // 初始化整体包围盒（在WCS下）
-            double overallMinX = double.MaxValue, overallMinY = double.MaxValue, overallMinZ = double.MaxValue;
-            double overallMaxX = double.MinValue, overallMaxY = double.MinValue, overallMaxZ = double.MinValue;
-            bool hasValidBody = false;
-
-            // 遍历所有实体
-            foreach (Body body in bodies)
-            {
-                if (body.Tag == Tag.Null)
-                    continue;
-
-                try
-                {
-                    // 使用精确版本获取 ACS 下的包围盒
-                    double[] minCornerACS = new double[3];
-                    double[,] directions = new double[3, 3];
-                    double[] distances = new double[3];
-
-                    ufSession.Modl.AskBoundingBoxExact(body.Tag, Tag.Null, minCornerACS, directions, distances);
-
-                    // 获取实体名称（用于诊断日志）
-                    string bodyName = "";
-                    try { bodyName = body.Name; } catch { }
-
-                    // 检查是否有特异值（任一方向绝对值>1e6），有则跳过该实体
-                    if (Math.Abs(distances[0]) > 1e6 || Math.Abs(distances[1]) > 1e6 || Math.Abs(distances[2]) > 1e6 ||
-                        Math.Abs(minCornerACS[0]) > 1e6 || Math.Abs(minCornerACS[1]) > 1e6 || Math.Abs(minCornerACS[2]) > 1e6)
-                    {
-                        theSession.ListingWindow.WriteLine(string.Format(
-                            "        【跳过特异实体】Tag={0} Name='{1}': X={2:F3} Y={3:F3} Z={4:F3} | 位置({5:F1},{6:F1},{7:F1})",
-                            body.Tag, bodyName, distances[0], distances[1], distances[2],
-                            minCornerACS[0], minCornerACS[1], minCornerACS[2]));
-                        continue;  // 跳过该实体，不参与包围盒计算
-                    }
-
-                    // 计算 ACS 下的最大角点
-                    double[] maxCornerACS = new double[3];
-                    maxCornerACS[0] = minCornerACS[0] + distances[0];
-                    maxCornerACS[1] = minCornerACS[1] + distances[1];
-                    maxCornerACS[2] = minCornerACS[2] + distances[2];
-
-                    // 将包围盒的8个顶点从ACS转换到WCS
-                    double[][] verticesACS = new double[][]
-                    {
-                        new double[] { minCornerACS[0], minCornerACS[1], minCornerACS[2] },
-                        new double[] { minCornerACS[0], minCornerACS[1], maxCornerACS[2] },
-                        new double[] { minCornerACS[0], maxCornerACS[1], minCornerACS[2] },
-                        new double[] { minCornerACS[0], maxCornerACS[1], maxCornerACS[2] },
-                        new double[] { maxCornerACS[0], minCornerACS[1], minCornerACS[2] },
-                        new double[] { maxCornerACS[0], minCornerACS[1], maxCornerACS[2] },
-                        new double[] { maxCornerACS[0], maxCornerACS[1], minCornerACS[2] },
-                        new double[] { maxCornerACS[0], maxCornerACS[1], maxCornerACS[2] }
-                    };
-
-                    foreach (var vertexACS in verticesACS)
-                    {
-                        // 顶点相对于WCS原点的向量
-                        double dx = vertexACS[0] - wcsOrigin[0];
-                        double dy = vertexACS[1] - wcsOrigin[1];
-                        double dz = vertexACS[2] - wcsOrigin[2];
-
-                        // 用WCS矩阵的逆（转置）转换到WCS坐标
-                        double wcsX = wcsMatrix[0] * dx + wcsMatrix[3] * dy + wcsMatrix[6] * dz;
-                        double wcsY = wcsMatrix[1] * dx + wcsMatrix[4] * dy + wcsMatrix[7] * dz;
-                        double wcsZ = wcsMatrix[2] * dx + wcsMatrix[5] * dy + wcsMatrix[8] * dz;
-
-                        // 更新WCS下的包围盒
-                        overallMinX = Math.Min(overallMinX, wcsX);
-                        overallMinY = Math.Min(overallMinY, wcsY);
-                        overallMinZ = Math.Min(overallMinZ, wcsZ);
-                        overallMaxX = Math.Max(overallMaxX, wcsX);
-                        overallMaxY = Math.Max(overallMaxY, wcsY);
-                        overallMaxZ = Math.Max(overallMaxZ, wcsZ);
-                    }
-
-                    hasValidBody = true;
-                }
-                catch (Exception ex)
-                {
-                    // 该实体无法获取包围盒（轻量化体），跳过
-                    theSession.ListingWindow.WriteLine(string.Format("        跳过实体: {0}", ex.Message));
-                    continue;
-                }
-            }
-
-            // 检查是否有有效实体
-            if (!hasValidBody)
-            {
-                theSession.ListingWindow.WriteLine(string.Format("      没有可获取包围盒的实体（可能都是轻量化体）"));
-                return null;
-            }
-
-            // 计算 XYZ 尺寸（WCS方向）
-            double xSize = overallMaxX - overallMinX;
-            double ySize = overallMaxY - overallMinY;
-            double zSize = overallMaxZ - overallMinZ;
-
-            return new double[] { xSize, ySize, zSize };
-        }
-        catch (Exception ex)
-        {
-            theSession.ListingWindow.WriteLine(string.Format("      获取WCS包围盒异常: {0}", ex.Message));
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// 将数据追加写入CSV文件
-    /// </summary>
-    private void WriteToCsv(string outputFolder, Component comp, double[] dimensions, Session theSession)
-    {
-        try
-        {
-            // 延迟初始化CSV文件（首次写入时创建）
-            if (_csvWriter == null)
-            {
-                string csvPath = Path.Combine(outputFolder, CsvFileName);
-                _csvWriter = new StreamWriter(csvPath, false, System.Text.Encoding.UTF8);
-                _headerWritten = false;
-            }
-
-            // 写入表头（仅一次）
-            if (!_headerWritten)
-            {
-                _csvWriter.WriteLine("零件名,ID,x,y,z");
-                _headerWritten = true;
-            }
-
-            // 获取零件名称
-            string partName = AssemblyTraverserUtils.GetDescriptiveName(comp);
-            string partId = comp.DisplayName;
-
-            // 写入数据行
-            _csvWriter.WriteLine(string.Format("{0},{1},{2:F3},{3:F3},{4:F3}",
-                partName, partId, dimensions[0], dimensions[1], dimensions[2]));
-            _csvWriter.Flush();
-
-            theSession.ListingWindow.WriteLine(string.Format(
-                "      记录: {0} | {1} | X={2:F3} Y={3:F3} Z={4:F3}",
-                partName, partId, dimensions[0], dimensions[1], dimensions[2]));
-        }
-        catch (Exception ex)
-        {
-            theSession.ListingWindow.WriteLine(string.Format("      CSV写入异常: {0}", ex.Message));
-        }
-    }
-
-    /// <summary>
-    /// 关闭CSV文件（应在遍历结束后调用）
-    /// </summary>
     public void Finish()
     {
-        if (_csvWriter != null)
-        {
-            try
-            {
-                _csvWriter.Close();
-            }
-            catch { }
-            _csvWriter = null;
-        }
+        if (_writer == null) return;
+        try { _writer.Dispose(); }
+        finally { _writer = null; }
     }
 }

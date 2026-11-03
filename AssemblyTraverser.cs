@@ -1,241 +1,145 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Threading;
 using NXOpen;
 using NXOpen.Assemblies;
 using NXOpen.UF;
 
-/// <summary>
-/// 装配遍历器主类 - 负责遍历装配结构树并调用事务处理器
-/// </summary>
-public class AssemblyTraverser
+public sealed class AssemblyTraverser
 {
-    private static TraversalConfig _config;
-    private static ITransactionHandler[] _transactionHandlers;
-    private static readonly int MaxLevel = 5;
+    private static int _running;
+    public static volatile bool StopRequested;
+    private readonly TraversalConfig _config;
+    private readonly List<ITransactionHandler> _handlers = new List<ITransactionHandler>();
+    private readonly HashSet<Tag> _processed = new HashSet<Tag>();
+    private int _completed, _failed, _skipped;
 
-    /// <summary>
-    /// 停止标记（volatile 保证多线程可见性）
-    /// </summary>
-    public static volatile bool StopRequested = false;
+    private AssemblyTraverser(TraversalConfig config)
+    {
+        _config = config;
+        // Measure first: a screenshot error must not prevent measurements.
+        if (config.flagXYZOn) _handlers.Add(new BoundingBoxExporter(config.coordinateSelection));
+        if (config.flagImageOn) _handlers.Add(new ImageExporter(config.viewList));
+    }
 
     public static void Run(TraversalConfig config)
     {
-        _config = config ?? new TraversalConfig();
-        BuildTransactionHandlers();
-        
-        InternalMain();
-    }
-
-    /// <summary>
-    /// 请求停止遍历（由外部调用，如NX对话框的停止按钮回调）
-    /// </summary>
-    public static void RequestStop()
-    {
-        StopRequested = true;
-    }
-
-    private static void BuildTransactionHandlers()
-    {
-        System.Collections.Generic.List<ITransactionHandler> handlers = 
-            new System.Collections.Generic.List<ITransactionHandler>();
-
-        if (_config.flagImageOn && _config.viewList != null && _config.viewList.Length > 0)
-        {
-            handlers.Add(new ImageExporter(_config.viewList));
-        }
-
-        if (_config.flagXYZOn)
-        {
-            handlers.Add(new BoundingBoxExporter(_config.coordinateSelection));
-        }
-
-        _transactionHandlers = handlers.ToArray();
-    }
-
-    private static void InternalMain()
-    {
-        // 重置停止标记
-        StopRequested = false;
-
-        var theSession = Session.GetSession();
-        var ufSession = UFSession.GetUFSession();
-        Part workPart = theSession.Parts.Work;
-        theSession.ListingWindow.Open();
-
-        if (workPart == null)
-        {
-            theSession.ListingWindow.WriteLine("Error: No work part found.");
-            return;
-        }
-
-        Component rootComponent = workPart.ComponentAssembly.RootComponent;
-        if (rootComponent == null)
-        {
-            theSession.ListingWindow.WriteLine("Error: Root component is null. Possibly a piece part.");
-            return;
-        }
-
-        // 确保输出目录存在
-        string outputFolder = string.IsNullOrEmpty(_config.filePath) 
-            ? System.IO.Path.GetTempPath() 
-            : _config.filePath;
-        System.IO.Directory.CreateDirectory(outputFolder);
-
-        // 在NX状态栏显示执行状态
-        ufSession.Ui.SetStatus("正在进行装配遍历...");
-
-        // 开始深度优先遍历，初始层级为0
+        if (config == null) throw new ArgumentNullException("config");
+        config.Validate();
+        if (Interlocked.CompareExchange(ref _running, 1, 0) != 0)
+            throw new InvalidOperationException("已有遍历任务正在执行。");
         try
         {
-            TraverseAssembly(rootComponent, ufSession, theSession, 0, outputFolder);
+            StopRequested = false;
+            new AssemblyTraverser(config).Execute();
         }
-        finally
-        {
-            // 清除状态栏
-            ufSession.Ui.SetStatus("");
+        finally { Interlocked.Exchange(ref _running, 0); }
+    }
 
-            // 关闭所有事务处理器（如CSV文件等资源）
-            foreach (var handler in _transactionHandlers)
+    public static void RequestStop() { StopRequested = true; }
+
+    private void Execute()
+    {
+        Session session = Session.GetSession();
+        Part rootPart = session.Parts.Work;
+        if (rootPart == null) throw new InvalidOperationException("请先打开装配并设置工作部件。");
+        Component root = rootPart.ComponentAssembly.RootComponent;
+        if (root == null) throw new InvalidOperationException("当前工作部件没有装配结构。");
+        string output = Path.Combine(_config.filePath, "NX_Traverser_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") +
+            "_" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        Directory.CreateDirectory(output);
+        using (var log = new RunLog(session, output))
+        {
+            RunLog.Write("输出目录: " + output);
+            RunLog.Write("每个匹配原型导出一次；匹配装配后不再单独导出其后代。坐标系=" + _config.coordinateSelection);
+            try { Traverse(root, rootPart.ComponentAssembly, session, 0, output); }
+            finally
             {
-                handler.Finish();
+                foreach (ITransactionHandler handler in _handlers)
+                {
+                    try { handler.Finish(); }
+                    catch (Exception ex) { ++_failed; RunLog.Error("Finish " + handler.GetType().Name, ex); }
+                }
+                try { UFSession.GetUFSession().Ui.SetStatus(string.Empty); }
+                catch (Exception ex) { RunLog.Error("清理状态栏", ex); }
+                RunLog.Write(string.Format("结束: 成功事务={0}, 失败={1}, 跳过={2}, 停止={3}",
+                    _completed, _failed, _skipped, StopRequested));
             }
         }
     }
 
-    /// <summary>
-    /// NX 卸载选项
-    /// </summary>
-    public static int GetUnloadOption(string arg)
+    private void Traverse(Component comp, ComponentAssembly assembly, Session session, int level, string output)
     {
-        return System.Convert.ToInt32(Session.LibraryUnloadOption.Immediately);
-    }
-
-    /// <summary>
-    /// 深度优先递归遍历装配结构。
-    /// </summary>
-    private static void TraverseAssembly(Component comp, UFSession ufSession, Session theSession, int level, string outputFolder)
-    {
-        // 检查组件是否仍然有效
-        if (comp == null || comp.Tag == Tag.Null)
-        {
-            return;
-        }
-
-        // 检查停止标记
-        if (StopRequested) return;
-
-        // 1. 按需加载当前组件（确保子件结构可见）
+        if (StopRequested || comp == null || comp.Tag == Tag.Null) return;
         try
         {
-            Tag instanceTag = ufSession.Assem.AskInstOfPartOcc(comp.Tag);
-            if (instanceTag != Tag.Null)
+            if (comp.IsSuppressed) { ++_skipped; return; }
+            Part part = NxGeometry.EnsurePrototype(comp, assembly, false);
+            Component[] children = comp.GetChildren();
+            string id = comp.DisplayName;
+            string name = AssemblyTraverserUtils.GetDescriptiveName(comp);
+            bool filtered = _config.namePatterns.Length > 0 || _config.idPatterns.Length > 0;
+            bool matched = filtered
+                ? AssemblyTraverserUtils.IsMatching(name, _config.namePatterns) || AssemblyTraverserUtils.IsMatching(id, _config.idPatterns)
+                : children.Length == 0;
+            if (matched)
             {
-                UFPart.LoadStatus loadStatus;
-                ufSession.Assem.EnsureChildLoaded(instanceTag, out loadStatus);
+                if (!_processed.Add(part.Tag))
+                {
+                    ++_skipped;
+                    RunLog.Write("[Skip duplicate prototype] " + id);
+                    return;
+                }
+                RunLog.Write(string.Format("[Process] {0} Name={1} ReadOnly={2} Modified={3}",
+                    id, name, part.IsReadOnly, part.IsModified));
+                UFSession.GetUFSession().Ui.SetStatus("正在处理: " + id);
+                NxGeometry.LoadFully(part);
+                bool wasModified = part.IsModified;
+                try
+                {
+                    using (var context = new NxPartContext(session, part))
+                    {
+                        foreach (ITransactionHandler handler in _handlers)
+                        {
+                            if (StopRequested) break;
+                            string stage = handler.GetType().Name + " " + id;
+                            try
+                            {
+                                RunLog.Write("[Begin] " + stage);
+                                handler.Process(comp, session, output, id + "_" + name);
+                                ++_completed;
+                            }
+                            catch (Exception ex) { ++_failed; RunLog.Error(stage, ex); }
+                        }
+                    }
+                }
+                finally
+                {
+                    if (!wasModified && part.IsModified)
+                        RunLog.Write("[WARN] 部件被 NX 标记为已修改: " + id +
+                            "；本工具未保存或清除修改标记，请本地核查加载、显示切换及站点回调。");
+                }
+            }
+            else if (children.Length > 0 && level < _config.maxDepth)
+            {
+                foreach (Component child in children)
+                {
+                    if (StopRequested) break;
+                    Traverse(child, assembly, session, level + 1, output);
+                }
+            }
+            else
+            {
+                ++_skipped;
+                RunLog.Write("[Skip] " + id + (children.Length > 0 ? " 已到最大层级" : " 不匹配"));
             }
         }
         catch (Exception ex)
         {
-            theSession.ListingWindow.WriteLine(string.Format(
-                "{0}Warning: Could not ensure component '{1}' is loaded. Error: {2}",
-                new string(' ', level * 2), comp.DisplayName, ex.Message));
-            return;
+            ++_failed;
+            RunLog.Error("Traverse level=" + level + " tag=" + comp.Tag, ex);
         }
-
-        // 2. 获取组件信息
-        string compId = comp.DisplayName;
-        string compName = AssemblyTraverserUtils.GetDescriptiveName(comp);
-        Part currentPart = comp.Prototype as Part;
-
-        // 3. 判断是否为装配体并获取子件（含原型二次确认）
-        bool isAssembly = false;
-        Component[] children = comp.GetChildren();
-        if (children.Length > 0)
-        {
-            isAssembly = true;
-        }
-        else
-        {
-            if (currentPart != null && currentPart.ComponentAssembly != null)
-            {
-                Component protoRoot = currentPart.ComponentAssembly.RootComponent;
-                if (protoRoot != null && protoRoot.GetChildren().Length > 0)
-                {
-                    isAssembly = true;
-                    children = protoRoot.GetChildren();
-                }
-            }
-        }
-
-        // 4. 检查两个通配符列表是否有配置
-        bool hasNameFilter = _config.namePatterns != null && _config.namePatterns.Length > 0;
-        bool hasIdFilter = _config.idPatterns != null && _config.idPatterns.Length > 0;
-
-        // 5. 名称匹配（如果有名称过滤）
-        bool nameMatched = hasNameFilter && AssemblyTraverserUtils.IsMatching(compName, _config.namePatterns);
-
-        // 6. ID匹配（如果有ID过滤）
-        bool idMatched = hasIdFilter && AssemblyTraverserUtils.IsMatching(compId, _config.idPatterns);
-
-        // 7. 决策标志（纯布尔逻辑）
-        bool shouldProcess = nameMatched
-                             || idMatched
-                             || (!hasNameFilter && !hasIdFilter && !isAssembly);
-
-        // 展开条件：不处理，但是装配体，小于最大处理层数
-        bool shouldExpand = !shouldProcess && isAssembly && level < MaxLevel;
-
-        // 8. 执行决策
-        if (shouldProcess)
-        {
-            string matchType = (nameMatched ? "Name" : "") +
-                               (idMatched ? (nameMatched ? "/ID" : "ID") : "");
-            if (!hasNameFilter && !hasIdFilter && !isAssembly)
-                matchType = "Default(all leaves)";
-
-            theSession.ListingWindow.WriteLine(string.Format("{0}[Process - {1}] {2} (Name: {3}, ID: {4})",
-                new string(' ', level * 2), matchType, compId, compName, compId));
-            
-            // 更新状态栏显示当前处理的组件
-            ufSession.Ui.SetStatus(string.Format("正在处理: {0}", compId));
-            
-            // 调用所有事务处理器，按顺序逐个执行
-            foreach (var handler in _transactionHandlers)
-            {
-                if (StopRequested) return;
-                handler.Process(comp, theSession, outputFolder, compId + "_" + compName);
-            }
-        }
-        else if (shouldExpand)
-        {
-            theSession.ListingWindow.WriteLine(string.Format("{0}[Assembly] {1} (Name: {2}, ID: {3}) - expanding",
-                new string(' ', level * 2), compId, compName, compId));
-            foreach (Component child in children)
-            {
-                if (StopRequested) return;
-                if (child != null && child.Tag != Tag.Null)
-                {
-                    TraverseAssembly(child, ufSession, theSession, level + 1, outputFolder);
-                }
-            }
-        }
-        else
-        {
-            theSession.ListingWindow.WriteLine(string.Format("{0}[Skip] {1} (Name: {2}, ID: {3})",
-                new string(' ', level * 2), compId, compName, compId));
-        }
-
-        // 9. 统一关闭当前组件（根节点除外）
-        if (level > 0 && currentPart != null)
-        {
-            try
-            {
-                currentPart.Close(BasePart.CloseWholeTree.False, BasePart.CloseModified.UseResponses, null);
-            }
-            catch (Exception ex)
-            {
-                theSession.ListingWindow.WriteLine(string.Format(
-                    "    关闭组件时出错: {0} - {1}", comp.DisplayName, ex.Message));
-            }
-        }
+        // Never save, close, check out, or discard changes in source parts.
     }
 }

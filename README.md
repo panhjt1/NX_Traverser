@@ -1,217 +1,62 @@
 # NX_Traverser
-NXUG自动化程序遍历Teamcenter结构树
 
-## 项目简介
-这是一个基于NXOpen C# API开发的自动化工具，用于遍历装配结构树并执行多种操作，包括：
-- 多视角截图导出（8个标准视角）
-- 包容体尺寸测量与CSV导出
+在 Siemens NX / Teamcenter 集成环境遍历装配，导出多视角 PNG 和 ACS/WCS 包围盒 CSV。此分支面向 **NX 2512，C# .NET Framework 4.8，Windows x64**。
 
-## 项目架构
+当前是供本地编译和验收的源码版本：DLX/XML、核心数学与文本回归已检查，NX SDK 编译和 Teamcenter 实机测试尚待完成。
 
-```mermaid
-flowchart TD
-    subgraph UI层
-        A[UIscripts.cs]
-    end
-    
-    subgraph 配置层
-        B[TraversalConfig.cs]
-    end
-    
-    subgraph 控制层
-        C[AssemblyTraverser.cs]
-    end
-    
-    subgraph 事务层
-        D[ImageExporter.cs]
-        E[BoundingBoxExporter.cs]
-    end
-    
-    subgraph 接口层
-        F[ITransactionHandler.cs]
-    end
-    
-    subgraph 工具层
-        G[AssemblyTraverser.Utilities.cs]
-        H[StopForm.cs]
-    end
-    
-    A -->|创建| B
-    A -->|调用| C
-    C -->|读取| B
-    C -->|实例化| D
-    C -->|实例化| E
-    D -.->|实现| F
-    E -.->|实现| F
-    C -->|使用| G
-    C -->|显示| H
+## 本地编译与部署
+
+将 [LOCAL_AGENT_PROMPT.md](LOCAL_AGENT_PROMPT.md) 交给本地 agent；其中包含取代码、构建、签名、部署及只读环境验收步骤，并在每次修改后维护。
+
+```powershell
+.\scripts\build.ps1 -NXInstallDir 'C:\Program Files\Siemens\NX2512' -Configuration Release
 ```
 
-## 执行流程
+要求 VS 2022 / Build Tools 与 .NET Framework 4.8 Developer Pack。项目引用本机 `NXBIN/managed` 中的 NXOpen、NXOpenUI 和 NXOpen.UF，并嵌入本机签名资源。不要混用 1946 或 `managed_core` DLL，不要随插件部署 Siemens DLL。
 
-```mermaid
-sequenceDiagram
-    participant UI as UIscripts
-    participant Config as TraversalConfig
-    participant Traverser as AssemblyTraverser
-    participant Image as ImageExporter
-    participant BBox as BoundingBoxExporter
+将编译并按站点要求签名的 `NX_Traverser.dll` 与 `ClassLibrary1.dlx` 放在一起，从 NX 的“文件 → 执行 → NX Open/Designcenter Open”加载 DLL。入口为 `ClassLibrary1.Main`。本项目是多文件类库，不应把 `UIscripts.cs` 单独作为 Journal 播放。
 
-    UI->>UI: 用户输入参数
-    UI->>Config: new TraversalConfig(params)
-    UI->>Traverser: Main(config)
-    
-    Traverser->>Traverser: 初始化StopForm
-    Traverser->>Traverser: 获取Session/WorkPart
-    
-    alt flagImageOn=true
-        Traverser->>Image: new ImageExporter(viewList)
-        Traverser->>Traverser: 加入_handlers数组
-    end
-    
-    alt flagXYZOn=true
-        Traverser->>BBox: new BoundingBoxExporter(coordinateSelection)
-        Traverser->>Traverser: 加入_handlers数组
-    end
-    
-    loop 遍历装配树
-        Traverser->>Traverser: TraverseAssembly()
-        alt 组件匹配条件
-            loop 每个handler
-                Traverser->>Image/BBox: Process(comp, session, outputFolder, name)
-            end
-        end
-    end
-    
-    loop 每个handler
-        Traverser->>Image/BBox: Finish()
-    end
-```
+DLX 已修复 XML 声明位置并保留原始控件 schema。其 `NX="1946"` 标记记录生成来源，不是运行时版本开关；请用 NX 2512 Block UI Styler 验证并按需另存。
 
-## 文件说明
+## 功能与结果语义
 
-| 文件名 | 功能描述 |
-|--------|----------|
-| [AssemblyTraverser.cs](file:///workspace/AssemblyTraverser.cs) | 主程序，负责装配结构树遍历、过滤和事务调度 |
-| [AssemblyTraverser.Utilities.cs](file:///workspace/AssemblyTraverser.Utilities.cs) | 工具类，提供名称获取和通配符匹配功能 |
-| [BoundingBoxExporter.cs](file:///workspace/BoundingBoxExporter.cs) | 包容体尺寸导出器，支持ACS/WCS坐标系，导出CSV格式结果 |
-| [ImageExporter.cs](file:///workspace/ImageExporter.cs) | 截图导出器，支持8个标准视角的PNG截图 |
-| [ITransactionHandler.cs](file:///workspace/ITransactionHandler.cs) | 事务处理器接口，可扩展新功能 |
-| [StopForm.cs](file:///workspace/StopForm.cs) | 停止控制窗口 |
-| [TraversalConfig.cs](file:///workspace/TraversalConfig.cs) | 配置数据类，集中管理所有可配置参数 |
-| [UIscripts.cs](file:///workspace/UIscripts.cs) | UI入口，提供参数配置界面 |
+- 名称读取 `DB_PART_NAME`，缺失时使用组件显示名；名称/ID 通配符列表按 OR 匹配，支持 `*`、`?`。空白行忽略；无过滤时处理叶子。
+- 相同原型只导出一次；匹配装配后不会再单独导出后代。根节点深度为 0，最大深度默认 5，可通过 `TraversalConfig.maxDepth` 调整。
+- 八个 PNG 视角：Trimetric、Isometric、Top、Front、Right、Back、Bottom、Left。透明背景；保留当前 WCS/三轴显示状态，结束恢复原视图。
+- 包围盒按**目标原型的 ACS/WCS**测量。选中子装配时包含未抑制后代实体在该子装配中的放置；不是顶层装配的每实例坐标报表。参考集缺体、未完整加载或任一实体计算失败时，记录失败而不写不完整尺寸。
+- 每次新建 `NX_Traverser_日期_时间_随机后缀` 子目录，含 PNG、`BoundingBoxResult.csv`（有成功测量时）及 `Traversal.log`，保留以前结果。
+- CSV 首五列为 `零件名,ID,x,y,z`，后接 `单位,坐标系,范围,实体数`；使用 UTF-8 BOM、固定小数点及标准引号转义。
 
-## 主要功能
+## Teamcenter 只读处理
 
-### 1. 装配结构遍历
-- 深度优先递归遍历装配结构树
-- 支持最大层级限制
-- 支持组件名称/ID通配符过滤
-- 自动按需加载组件
+已移除截图时对源 WCS 可见性的写入、源几何清理、遍历后主动关闭组件，以及无效的警告抑制代码。只有 OK 成功提交且 Block Styler 对话框释放后才执行任务，取消不会执行旧配置。不保存、不签出、不修改权限、不清除模型修改标记。
 
-### 2. 多视角截图
-- 8个标准视角：正等测、斜等测、顶、前、右、后、底、左
-- 透明背景PNG格式
-- 自动增强边缘
-- 支持选择特定视角
+必要的加载、显示切换和视图旋转仍需站点实测。官方指出显示切换可能重置 undo 标记，恢复工作/显示上下文不等于恢复撤销历史。不自动关闭加载部件会增加会话内存占用。具体原因分析和 API 链接见 [NX2512_API_REVIEW.md](docs/NX2512_API_REVIEW.md)。
 
-### 3. 包容体测量
-- 支持ACS（绝对坐标系）和WCS（工作坐标系）
-- 精确包围盒计算
-- CSV格式导出（零件名,ID,x,y,z）
-- 自动过滤异常实体（>1e6尺寸）
+## 直接调用
 
-## 配置说明
-
-### UI配置参数
-
-| 参数 | 类型 | 说明 | 默认值 |
-|------|------|------|--------|
-| `filePath` | string | 输出文件夹路径 | 空字符串 |
-| `namePatterns` | string[] | 名称匹配模式列表（每行一个模式） | 空数组 |
-| `idPatterns` | string[] | ID匹配模式列表（每行一个模式） | 空数组 |
-| `flagImageOn` | bool | 是否启用截图功能 | false |
-| `flagXYZOn` | bool | 是否启用包容体测量功能 | false |
-| `viewList` | SnapViewType[] | 选中的截图视角 | 空数组 |
-| `coordinateSelection` | string | 坐标系选择（"WCS"/"ACS"） | "ACS" |
-
-### 通配符匹配规则
-- `*` 匹配任意字符序列
-- `?` 匹配单个字符
-- 示例：`*总成*`, `????-8103020-*`, `气缸*`
-
-## 使用方法
-
-### 通过UI界面配置（推荐）
-
-1. 在NX中打开装配体
-2. 运行 `UIscripts.cs`（通过Journal或Shared Library）
-3. 在弹出的UI对话框中配置参数：
-   - **输出路径**: 设置截图和测量结果的保存目录
-   - **名称匹配**: 输入名称过滤条件（每行一个模式）
-   - **ID匹配**: 输入ID过滤条件（每行一个模式）
-   - **截图设置**: 勾选"启用截图"并选择要截取的视角
-   - **测量设置**: 勾选"启用测量"并选择坐标系（WCS/ACS）
-4. 点击"确定"或"应用"按钮启动遍历
-
-### 直接调用API
+从已加载 NX 的程序中调用（所有 NX API 留在 NX 主线程）：
 
 ```csharp
-TraversalConfig config = new TraversalConfig();
-config.filePath = @"D:\output";
-config.namePatterns = new string[] { "*总成*" };
-config.idPatterns = new string[] { "????-8103020-*" };
-config.flagImageOn = true;
-config.viewList = new ImageExporter.SnapViewType[] { 
-    ImageExporter.SnapViewType.Isometric, 
-    ImageExporter.SnapViewType.Top 
-};
-config.flagXYZOn = true;
-config.coordinateSelection = "ACS";
-
-AssemblyTraverser.Main(config);
+AssemblyTraverser.Run(new TraversalConfig {
+    filePath = @"D:\output",
+    namePatterns = new[] { "*总成*" },
+    idPatterns = new string[0],
+    flagImageOn = true,
+    viewList = new[] { ImageExporter.SnapViewType.Isometric, ImageExporter.SnapViewType.Top },
+    flagXYZOn = true,
+    coordinateSelection = "WCS",
+    maxDepth = 5
+});
 ```
 
-## 错误处理与防错机制
+`AssemblyTraverser.RequestStop()` 仅为外部协作式取消接口，不能中断正在阻塞的 NX API；本仓库不包含停止窗口。
 
-### 运行时防错
-- **组件有效性检查**: 在遍历过程中自动检测组件对象是否仍然有效，避免"试图使用不活动的对象"错误
-- **只读部件处理**: 通过关闭对话框后再执行遍历，避免只读部件弹窗打断自动化流程
-- **空值保护**: 对关键对象和属性访问进行空值检查
+## 独立检查
 
-### UI输入验证
-- 保存地址为空时不允许运行
-- 没有任何功能激活时禁止运行
-- 未激活截图时禁用视角选择列表
-- 激活截图但未选择视角时禁止运行
-
-## 扩展开发
-
-### 添加新的事务处理器
-
-1. 实现 `ITransactionHandler` 接口
-2. 在 `AssemblyTraverser.BuildTransactionHandlers()` 方法中添加实例化逻辑
-3. 在UI中添加对应的配置控件
-
-### 支持的视图类型
-
-```csharp
-public enum SnapViewType
-{
-    Trimetric,   // 斜等测
-    Isometric,   // 正等测
-    Top,         // 顶视
-    Front,       // 前视
-    Right,       // 右视
-    Back,        // 后视
-    Bottom,      // 底视
-    Left         // 左视
-}
+```text
+python tests/validate_dlx.py
+dotnet run --project tests/CoreTests.csproj -c Release
 ```
 
-## 版本历史
-
-| 版本 | 日期 | 变更说明 |
-|------|------|----------|
-| v1.1 | 2026-06 | 添加UI界面支持，支持参数配置 |
-| v1.0 | 2026-05 | 初始版本，DLL直接执行模式 |
+第二项只需 .NET 8 SDK、不依赖 NX 或 NuGet 包，测试旋转坐标系、多实体合并、异常数据、CSV 与文件名处理。它不替代 NX 2512 编译或 Teamcenter 验收。

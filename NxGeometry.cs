@@ -1,0 +1,81 @@
+using System;
+using System.Collections.Generic;
+using NXOpen;
+using NXOpen.Assemblies;
+
+internal static class NxGeometry
+{
+    public static Part EnsurePrototype(Component component, ComponentAssembly assembly, bool fully)
+    {
+        Part part = component.Prototype as Part;
+        if (part == null)
+        {
+            ComponentAssembly.OpenComponentStatus[] openStatus;
+            using (PartLoadStatus status = assembly.OpenComponents(ComponentAssembly.OpenOption.ComponentOnly,
+                new[] { component }, out openStatus))
+                NxPartContext.CheckLoadStatus(status, "OpenComponents " + component.DisplayName);
+            if (openStatus == null || openStatus.Length != 1 ||
+                openStatus[0] != ComponentAssembly.OpenComponentStatus.SuccessfullyOpened)
+                throw new InvalidOperationException("组件未成功打开或已在加载过程中被删除。");
+            part = component.Prototype as Part;
+        }
+        if (part == null) throw new InvalidOperationException("无法读取组件原型: " + component.DisplayName);
+        if (fully) LoadFully(part);
+        else
+            using (PartLoadStatus status = part.LoadThisPartPartially())
+                NxPartContext.CheckLoadStatus(status, "LoadThisPartPartially " + part.Name);
+        return part;
+    }
+
+    public static void LoadFully(Part part)
+    {
+        if (!part.IsFullyLoaded)
+        {
+            bool modified = part.IsModified;
+            RunLog.Write("[Load geometry] " + part.Name + " ReadOnly=" + part.IsReadOnly + " Modified=" + modified);
+            using (PartLoadStatus status = part.LoadThisPartFully())
+                NxPartContext.CheckLoadStatus(status, "LoadThisPartFully " + part.Name);
+            if (!modified && part.IsModified)
+                RunLog.Write("[WARN] 加载几何后 NX 将部件标记为已修改: " + part.Name);
+        }
+        if (!part.IsFullyLoaded) throw new InvalidOperationException("几何未完整加载: " + part.Name);
+    }
+
+    // Whole selected prototype including unsuppressed descendant occurrences.
+    // Never silently report an undersized box when a body cannot be represented.
+    public static List<Tag> CollectBodyTags(Part part)
+    {
+        LoadFully(part);
+        var tags = new List<Tag>();
+        foreach (Body body in part.Bodies) if (body.Tag != Tag.Null) tags.Add(body.Tag);
+        Component root = part.ComponentAssembly.RootComponent;
+        if (root != null)
+        {
+            var ancestors = new HashSet<Tag> { part.Tag };
+            foreach (Component child in root.GetChildren()) Collect(child, part.ComponentAssembly, tags, ancestors, 0);
+        }
+        return tags;
+    }
+
+    private static void Collect(Component component, ComponentAssembly assembly, List<Tag> tags,
+        HashSet<Tag> ancestors, int depth)
+    {
+        if (AssemblyTraverser.StopRequested) throw new OperationCanceledException("遍历已停止。");
+        if (component.IsSuppressed) return;
+        if (depth > 100) throw new InvalidOperationException("装配结构超过 100 层。");
+        Part part = EnsurePrototype(component, assembly, true);
+        if (!ancestors.Add(part.Tag)) throw new InvalidOperationException("检测到循环装配引用。");
+        try
+        {
+            foreach (Body body in part.Bodies)
+            {
+                NXObject occurrence = component.FindOccurrence(body);
+                if (occurrence == null || occurrence.Tag == Tag.Null)
+                    throw new InvalidOperationException("参考集未包含实体，不能输出完整装配结果: " + component.DisplayName);
+                tags.Add(occurrence.Tag);
+            }
+            foreach (Component child in component.GetChildren()) Collect(child, assembly, tags, ancestors, depth + 1);
+        }
+        finally { ancestors.Remove(part.Tag); }
+    }
+}

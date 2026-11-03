@@ -6,7 +6,6 @@ bin/
 obj/
 *.dll
 *.pdb
-*.dlx
 
 # Visual Studio files
 .vs/
@@ -16,3 +15,8 @@ obj/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Local validation and export artifacts
+artifacts/
+TestResults/
+__pycache__/

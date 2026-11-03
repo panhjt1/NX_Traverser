@@ -38,12 +38,13 @@ public static class AssemblyTraverserUtils
     /// </summary>
     public static bool IsMatching(string name, string pattern)
     {
+        if (name == null || string.IsNullOrWhiteSpace(pattern)) return false;
         // 将通配符转换为正则表达式
         // 1. 转义除了 * 和 ? 之外的所有正则特殊字符
         string regexPattern = "^" + Regex.Escape(pattern)
                                     .Replace("\\*", ".*")
                                     .Replace("\\?", ".") + "$";
-        return Regex.IsMatch(name, regexPattern);
+        return Regex.IsMatch(name, regexPattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     }
 
     /// <summary>
