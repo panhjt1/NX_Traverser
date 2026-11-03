@@ -18,21 +18,25 @@
 4. 在含 `NX_Traverser.csproj` 的解压目录中执行下方构建命令。构建脚本不调用 Git，也不自动下载依赖；NX 引用、MSBuild 和相应 Targeting Pack 需由本机提供。
 5. 如需额外开发包，通过可联网浏览器取得安装包/官方引用包后按公司允许的方式传入本地，不假设本地 agent 能执行在线安装或 NuGet 还原。
 
-## 本次修复：隔离布局恢复改用 ChangeLayout
+## 本次更新：580039 后核验恢复状态，不能视为实机修复完成
 
-接续 `0a6a00b`。最新实测仍返回 925052「要打开的布局已显示」，且日志明确进入“切回原布局”分支，说明当时 `Layouts.Current` 与捕获的原布局不同或为空，而原布局仍拒绝 Open。上次只比较 tag 的修复未解决，先前测试把“当前”和“已显示”合并为一个状态，未覆盖这一行为。
+接续 `e5a7cc2`。用户最新日志显示：隔离后有新的 CurrentLayout，ActiveViews 同时包含隔离视图和原视图；ChangeLayout 返回 580039「使用了一个已删除或无效的类号」。旧代码立即停止，未取得调用后的布局/视图状态。用户随后明确确认：报错后画面已回到原装配。因此界面切换已经发生，但不能仅凭视觉反馈认定所有 NX 对象状态均恢复；是否为临时对象清理阶段报错仍未证实。
 
-- `NxImageContext.Dispose` 已移除 `Layout.Open()`。需要恢复原布局时调用官方 `Layouts.ChangeLayout(originalLayout)`；当前已是原布局时直接恢复视图。如果切换后隔离视图仍在活动列表中，再用 ReplaceView 替换。
-- 不通过捕获/忽略 925052 声称恢复成功。ChangeLayout 必须把 Current 切回原布局，随后恢复视图、刷新显示，并核对原布局、唯一活动视图、工作视图及展开状态；任何失败仍停止并保留当前加载集合。
-- 新增 `[Image state] captured/isolated/before restore/after ChangeLayout/after restore`：记录原布局、当前布局、原布局 DisplayStatus、原视图、工作视图、活动视图及隔离视图 tag。DisplayStatus 只作为诊断值，不用于推断能否再次 Open。
-- 测试替身分别表示 Current 和 Open 的已显示限制，已确认上一版实现会复现失败。新实现覆盖同布局替换、隔离使用不同布局、部分创建失败、连续恢复卸载，以及 ChangeLayout 抛错/未生效后保留部件。共 121 项离线断言通过，仍不是 NX 原生退出验收。
+本次改动：
+
+- 恢复过程中按原 tag 从 Layouts.ToArray / Views.ToArray 重新取得对象，不跨原生切换继续使用旧布局/视图包装对象；视图快照仍保存原矩阵、位置、比例和 WCS/三重轴开关。
+- ChangeLayout 成功或失败都输出 `[Image state] after ChangeLayout (including error)`，异常退出另有 `restore failed`。CurrentLayout、WorkView、ActiveViews、DisclosedViews 分别查询；某一项失败会写 NXError，不丢掉其他可读状态。日志不再读取旧布局对象的 DisplayStatus。
+- 只针对 580039 增加有条件恢复：原布局确已成为 CurrentLayout，唯一 ActiveViews 是原视图，且隔离 tag 不在 GetDisclosedModelViews 返回列表中，才继续恢复原工作视图和显示状态；刷新显示后再次核对 display/work、布局、活动视图、工作视图和展开状态。
+- 全部核验通过才输出 `[Image restore verified]` 并允许逐节点卸载。580039 仍记录，调用的 Completed=False 不会被改写；不完整状态、其他错误、读取状态失败或后续恢复失败仍停止并保留部件。不增加自动重试、不重新 Open、不激活只读原型、不强删临时窗口或清空全部撤销记录。
+- **这不是新的、已证实的退出接口**。如果 ChangeLayout 实际没有退出隔离，这版仍会停止，只会给出更完整的诊断。先完成下面单件验证及必要的原生 Journal 采集，再决定后续退出实现，不以测试替身通过代替实机证据。
 
 ### 本地本次优先验收
 
-1. 重新编译本分支，先从已退出上次残留隔离的普通单建模视口开始，顶层装配同时为工作/显示部件，仅截图同一单件。
-2. 预期 `Restore image layout → ChangeLayout (restore image) → Image state after ChangeLayout → Image state after restore → Image context restored → Unload done`。如果 Current 本来就是原布局，可以没有 ChangeLayout；Replace isolated view 只在隔离视图仍显示时出现。此版本不应再从恢复路径调用 Layout.Open。
-3. 比较 captured 与 after restore：OriginalLayout 与 CurrentLayout 应一致，WorkView 与唯一 ActiveViews 应等于 OriginalView。成功事务应增加，临时已加载数下降，正常情况停止=False；不要绕过恢复失败的停止保护。
-4. 连续跑两轮确认隔离已退出、不残留临时视图，再扩大到多件。检查图片组件范围、WCS/三重轴隐藏、视角及恢复。若仍失败，保留上述所有 Image state 行和首个失败调用；此前实测只证明捕获调用完成、文件存在，没有证明图片内容或退出成功。
+1. 重新编译，在已退出残留隔离的普通单视口中，仅截图同一单件。完整保留 captured、isolated、before restore、after ChangeLayout (including error)、after restore / restore failed 各行，并记录报错后画面是否已返回原装配。
+2. 只有出现 `Image restore verified`（580039 恢复分支）及 `Image context restored → Unload done`，才视为该次上下文恢复和清理完成。正常无异常分支不需要 verified 行。比较原视图/布局 tag、图片范围、隐藏坐标轴、恢复开关及最终 LoadedParts。
+3. 若隔离仍显示或状态不符，不继续大树测试。由本地 agent 协助在 NX 2512 测试会话中录制 C# Journal：开始录制 → 对一个组件手动执行相同的隔离操作 → 用正常 UI 关闭该隔离窗口/退出隔离 → 停止录制。截取创建和退出附近的调用及必要对象定义，脱敏后交回；无需模型文件。
+4. 如果 Journal 没记录退出动作，如实注明录制为空或操作不支持录制，并记录实际 UI 操作名称及 NX maintenance build；不要自行猜菜单命令、使用反射或自动确认弹窗。结合新增状态日志与本机 SDK/Siemens 支持确认退出方式。
+5. 单件恢复、图像和卸载都确认后再连续两轮，最后扩大到多件。源部件保存/签出、清修改标记不属于本次处理方案。
 
 ## 前次更新：隐藏坐标轴、隔离截图和卸载失效对象修复
 
@@ -168,7 +172,7 @@ dotnet run --project .\tests\CoreTests.csproj -c Release
 
 ## 当前已验证及未验证
 
-- 云端 **121 项独立 C# 断言通过**：数学/文本和所有权策略、真实清理控制流（含父关闭使子包装对象失效、3615013 目标消失/仍在会话两种分支）、显示上下文、实际截图代码的隐藏/恢复/取消/失败控制流，以及实例旋转补偿。使用 .NET 8.0.427 SDK Roslyn 编译执行；NX 相关测试通过显式测试替身运行，输出的是假文件，不是 NX 渲染验证。
+- 云端 **136 项独立 C# 断言通过**：数学/文本和所有权策略、真实清理控制流（含父关闭使子包装对象失效、3615013 目标消失/仍在会话两种分支）、显示上下文、实际截图代码的隐藏/恢复/取消/失败控制流，以及实例旋转补偿；新增双活动视图、580039 完全/部分恢复、其他错误和残留 disclosed view 的分支。使用 .NET 8.0.427 SDK Roslyn 编译执行；NX 相关测试通过显式测试替身运行，输出的是假文件，不是 NX 渲染验证。
 - `python tests/validate_dlx.py` 通过；`git diff --check` 通过。
 - 对比旧 DLX 解析树，除文件标题、日期尾部空白、OK/Cancel 导航外，原属性均保留。15 个插件源文件及 3 个测试源文件通过 C# 7.3 语法解析；这不包含 NX SDK 类型检查。
 - 已读取并核对官方 2512 API 链接，见 `docs/NX2512_API_REVIEW.md`。

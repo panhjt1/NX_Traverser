@@ -92,11 +92,23 @@
 
 首次实测中隔离创建、图像捕获均已返回成功，PNG 文件存在，但 Restore image layout 内的 Open 返回 925052「要打开的布局已显示」。后续 `0a6a00b` 加了 Current tag 检查，用户仍复现：日志进入“切回原布局”后 Open 抛出同一个错误。因此 Current 不同或为空不能证明原布局可以再次 Open；上版控制流和测试替身均未覆盖这个状态。错误号含义来自用户运行日志，不是官方枚举推断。
 
-本次重新核对 Siemens 2512 LayoutCollection.ChangeLayout：文档明确定义其作用是把给定布局设为当前布局。恢复路径改为调用该接口，完全移除 Layout.Open，不以 DisplayStatus 或捕获 925052 作为恢复成功依据。Layout.DisplayStatus 的文档语义是“活动显示部件的当前布局”，故它只写入诊断日志，不能拿它替代对 Open 行为的判断。
+本次重新核对 Siemens 2512 LayoutCollection.ChangeLayout：文档明确定义其作用是把给定布局设为当前布局。恢复路径改为调用该接口，完全移除 Layout.Open，不以 DisplayStatus 或捕获 925052 作为恢复成功依据。Layout.DisplayStatus 的文档语义是“活动显示部件的当前布局”，不能拿它替代对 Open 行为的判断；后续诊断不再读取缓存布局对象。
 
-切换后先验证 Current，再按需替换仍显示的隔离视图，恢复原工作视图、展开状态和视图参数。MakeUpToDate 后再次核对布局/活动视图/工作视图/展开状态。日志同时记录各阶段 tag 和原布局 DisplayStatus。错误或状态不符仍停止新加载，保留当前加载集合。
+切换后先验证 Current，再按需替换仍显示的隔离视图，恢复原工作视图、展开状态和视图参数。MakeUpToDate 后再次核对布局/活动视图/工作视图/展开状态。日志记录各阶段 tag。后续对 580039 的有条件恢复见下节；其他错误或未验证的状态仍停止新加载，保留当前加载集合。
 
 回归替身将 Current 与已显示时拒绝 Open 的行为分开，并模拟隔离改变 Current，证实上一版失败、新实现通过；覆盖同布局替换、不同布局切换、部分创建失败及切换抛错/未生效。测试替身不证明 ChangeLayout 在实际站点中的退出效果，不能宣称本机验收完成。
+
+## 580039：只能用调用后状态验证是否已恢复
+
+最新用户实测提供了两个同时活动的视图：原视图仍在，新增隔离视图及当前布局。ChangeLayout 抛 580039「使用了一个已删除或无效的类号」，但原版本没有记录异常后的状态。用户随后确认报错后画面已返回原装配，说明界面切换已经发生；仍不能仅凭视觉反馈证明原生对象状态完整，也不能断言异常一定来自内部清理。
+
+本次继续使用已核对的 ChangeLayout，不再猜测新的退出函数。按原 tag 从 [LayoutCollection.ToArray](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a64322.html) 和 [ViewCollection.ToArray](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a81946.html) 重取对象。GetActiveViews 与 GetDisclosedModelViews 分别确认原活动视图集合及隔离视图不再 disclosed；诊断各字段独立查询，避免一个无效包装对象掩盖全部状态。
+
+仅在 ChangeLayout 抛 580039 且新查询确认原布局、唯一原活动视图、无残留隔离 disclosed view 时，继续恢复原工作视图与快照；显示刷新后再次核对全部上下文，才能记录 Image restore verified 并卸载。其他错误、状态不符或读取失败仍停止；错误日志保留，不把 Completed=False 改成 True。不清除用户修改标记或撤销历史。
+
+额外核查了 [ViewUIManager.CreatePreview](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a81966.html)，它只创建预览，不是退出接口；[UF_VIEW_delete](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_view/global.html#UF_VIEW_delete) 明确限制删除工作视图及仍属于布局的视图，因此未拿它强删当前隔离视图。未找到具有明确退出契约的独立 EndIsolate API。
+
+136 项离线断言包含完全恢复后报 580039、报错前未改变状态、双视图残留、disclosed 残留，以及其他错误不能放行。替身只验证代码的判定分支，不能证实本站点触发的是哪一类。若本机仍未退出，需按本地提示词采集手动退出的 Journal 和调用后状态；本次不宣称实机修复完成。
 
 ## 关闭后的 3615013：失效对象与会话复核
 
@@ -120,4 +132,4 @@
 
 ## 验证边界
 
-本次已执行 DLX/XML/映射检查及 121 项独立 C# 断言。数学/文本/所有权策略之外，真实资源管理器、显示上下文、截图代码与显式 NX 测试替身组合编译并验证控制流；替身不证明官方 API 签名或原生行为。还以官方 net472 框架引用完成同一测试程序的编译，未在 Framework 4.7.2 运行。未执行 NX SDK 全量编译、NX 原生 DLX 加载、PNG 渲染、Teamcenter 实机测试或本地签名；这些由 [本地 agent 交接](../LOCAL_AGENT_PROMPT.md) 列出。纯算法测试通过不等于 NX 2512 集成验收通过。
+本次已执行 DLX/XML/映射检查及 136 项独立 C# 断言。数学/文本/所有权策略之外，真实资源管理器、显示上下文、截图代码与显式 NX 测试替身组合编译并验证控制流；替身不证明官方 API 签名或原生行为。还以官方 net472 框架引用完成同一测试程序的编译，未在 Framework 4.7.2 运行。未执行 NX SDK 全量编译、NX 原生 DLX 加载、PNG 渲染、Teamcenter 实机测试或本地签名；这些由 [本地 agent 交接](../LOCAL_AGENT_PROMPT.md) 列出。纯算法测试通过不等于 NX 2512 集成验收通过。

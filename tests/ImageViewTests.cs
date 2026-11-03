@@ -31,6 +31,7 @@ internal static class ImageViewTests
             WcsVisibility = true, TriadVisibility = false, Matrix = new Matrix3x3 { Xx = 1, Yy = 1, Zz = 1 } };
         root.Views.WorkView = original;
         root.Views.Active = new View[] { original };
+        root.Views.All.Add(original);
         root.Layouts = new LayoutCollection { Current = new Layout { Owner = root, Tag = (Tag)1001, Original = original } };
         root.ComponentAssembly = new ComponentAssembly { Owner = root };
         component = new Component { Tag = (Tag)2000, OwningPart = root,
@@ -119,6 +120,11 @@ internal static class ImageViewTests
             CheckRepeatedIsolateCleanup();
             CheckFailedLayoutChange(false);
             CheckFailedLayoutChange(true);
+            CheckNativeTransitionError(580039, false, false, true);
+            CheckNativeTransitionError(580039, true, false, false);
+            CheckNativeTransitionError(580039, false, true, false);
+            CheckNativeTransitionError(925052, false, false, false);
+            CheckNativeTransitionError(580039, false, false, false, true);
             TransformChecks();
         }
         finally { Directory.Delete(output, true); }
@@ -164,6 +170,42 @@ internal static class ImageViewTests
             Check(AssemblyTraverser.Stopped, "Unrestored separate layout stops traversal");
             resources.ReleaseUnused("failed layout change");
             Check(!temporary.Closed, "Unrestored separate layout keeps its referenced parts loaded");
+        }
+    }
+    private static void CheckNativeTransitionError(int code, bool beforeChange, bool keepIsolate, bool recover, bool keepDisclosure = false)
+    {
+        Part root; Component component;
+        Session session = Setup(out root, out component);
+        Layout layout = root.Layouts.Current;
+        View original = root.Views.WorkView;
+        session.Parts.Items.Remove((BasePart)component.Prototype);
+        using (var resources = new NxPartResources(session))
+        {
+            Part temporary = session.Add("native transition target", PartLoadState.PartiallyLoaded);
+            component.Prototype = temporary;
+            var context = new NxImageContext(session, component);
+            Check(root.Views.Active.Length == 2 && root.Views.Active[1] == original,
+                "Isolate and original views can remain active together, as in the supplied log");
+            root.Layouts.NativeTransitionError = code;
+            root.Layouts.ThrowBeforeChange = beforeChange;
+            root.Layouts.LeaveIsolateOnChange = keepIsolate;
+            if (keepDisclosure) root.Views.DisclosedOverride = new[] { context.View };
+            if (recover)
+            {
+                context.Dispose();
+                Check(root.Layouts.Current == layout && root.Views.Active.Length == 1 &&
+                    root.Views.WorkView == original && !AssemblyTraverser.Stopped,
+                    "580039 is recoverable only after actual layout/view restoration");
+                Check(resources.ReleaseUnused("verified native error") && temporary.Closed,
+                    "Verified recovery allows releasing the temporary target");
+            }
+            else
+            {
+                Fails(context.Dispose, "Unrecovered state or another native error must propagate");
+                resources.ReleaseUnused("unverified native error");
+                Check(AssemblyTraverser.Stopped && !temporary.Closed,
+                    "Keep referenced parts when native error recovery is not proven");
+            }
         }
     }
     private static void TransformChecks()
@@ -223,9 +265,13 @@ namespace NXOpen
         public Part Owner;
         public View WorkView;
         public View[] Active;
+        public View[] DisclosedOverride;
+        public readonly System.Collections.Generic.List<View> All = new System.Collections.Generic.List<View>();
         public bool Expanded;
         public Display.StudioImageCaptureBuilder LastBuilder;
         public View[] GetActiveViews() { return Active; }
+        public View[] GetDisclosedModelViews() { return DisclosedOverride ?? Active; }
+        public View[] ToArray() { return All.ToArray(); }
         public bool IsWorkViewExpanded() { return Expanded; }
         public void UnexpandWork() { Expanded = false; }
         public Display.StudioImageCaptureBuilder CreateStudioImageCaptureBuilder()
@@ -233,16 +279,27 @@ namespace NXOpen
     }
     public sealed class LayoutCollection
     {
-        public Layout Current;
+        private Layout _current;
+        private readonly System.Collections.Generic.List<Layout> _all = new System.Collections.Generic.List<Layout>();
+        public Layout Current
+        {
+            get { return _current; }
+            set { _current = value; if (value != null && !_all.Contains(value)) _all.Add(value); }
+        }
+        public Layout[] ToArray() { return _all.ToArray(); }
         public bool LeaveIsolateOnChange, FailChange, RefuseChange;
+        public int NativeTransitionError;
+        public bool ThrowBeforeChange;
         public int ChangeCalls;
         public void ChangeLayout(Layout layout)
         {
             ++ChangeCalls;
+            if (NativeTransitionError != 0 && ThrowBeforeChange) throw new NXException(NativeTransitionError);
             if (FailChange) throw new Exception("layout change failed");
             if (RefuseChange) return;
             Current = layout;
             if (!LeaveIsolateOnChange) layout.Owner.Views.Active = new[] { layout.Original };
+            if (NativeTransitionError != 0) throw new NXException(NativeTransitionError);
         }
     }
     public sealed class Layout
@@ -297,7 +354,9 @@ namespace NXOpen.Assemblies
         {
             isolated = new ModelingView { Owner = Owner, Tag = (Tag)1002, WcsVisibility = true,
                 TriadVisibility = true, Matrix = new Matrix3x3 { Xx = 1, Yy = 1, Zz = 1 } };
-            Owner.Views.Active = new[] { isolated };
+            View original = Owner.Views.WorkView;
+            Owner.Views.All.Add(isolated);
+            Owner.Views.Active = new[] { isolated, original };
             if (CreateSeparateLayout)
                 Owner.Layouts.Current = new Layout { Owner = Owner, Tag = (Tag)1003, Original = isolated };
             return new ErrorList { Length = FailAfterCreate ? 1 : 0 };
