@@ -100,8 +100,15 @@ internal sealed class NxImageContext : IDisposable
             {
                 RunLog.NxCall("Restore image layout", () =>
                 {
-                    // Reopen the captured layout to undisplay the temporary view.
-                    _layout.Open();
+                    // Isolate may replace a view inside the existing layout.
+                    // NX raises 925052 when Open is called on that layout again.
+                    Layout current = _display.Layouts.Current;
+                    if (current == null || current.Tag != _layout.Tag)
+                    {
+                        RunLog.Write("[Image restore] 切回原布局。");
+                        _layout.Open();
+                    }
+                    else RunLog.Write("[Image restore] 原布局仍在显示，跳过 Open，直接恢复视图。");
                     foreach (View active in _display.Views.GetActiveViews())
                     {
                         if (active.Tag != _isolateTag || active.Tag == _original.Tag) continue;
@@ -109,7 +116,7 @@ internal sealed class NxImageContext : IDisposable
                         var original = _original.View as ModelingView;
                         if (isolated == null || original == null)
                             throw new InvalidOperationException("临时视图仍在显示，无法用布局替换恢复；已停止。");
-                        _layout.ReplaceView(isolated, original, false);
+                        RunLog.NxCall("Replace isolated view", () => _layout.ReplaceView(isolated, original, false));
                     }
                     _original.View.MakeWork();
                     if (_expanded) _original.View.Expand();

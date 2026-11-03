@@ -75,7 +75,7 @@
 | [View](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a81942.html) 的 MakeWork、Matrix、Orient、WcsVisibility、TriadVisibility | MakeWork 选择工作视图，本身不保证视图正显示，因此另查活动视图。Matrix 为模型空间到视图空间旋转。用视图级 bool 开关隐藏 WCS/三重轴并恢复原值，不写全局偏好或 part.WCS.Visibility；未变化的原视图不重复写回矩阵 |
 | [UFAssem.AskTransformOfOcc / AskViewExplosion](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a77634.html) | 取组件 4×4 放置矩阵及当前视图的爆炸状态。对正常旋转应用 C × R逆，使原型方向不受实例放置旋转影响；忽略平移以 Fit 居中。拒绝爆炸、镜像、剪切和非均匀缩放。嵌套实例坐标仍需实机图片比对 |
 | [ViewCollection](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a81946.html) | GetActiveViews、WorkView、IsWorkViewExpanded()、UnexpandWork()；仅接受普通单建模视口，捕获并核对展开状态和工作视图。必须工作部件=显示部件；调用方先退出已有隔离/制图/分屏状态 |
-| [LayoutCollection.Current](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a64322.html)、[Layout.Open/ReplaceView](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a64166.html) | 重开捕获的原布局，若临时建模视图仍显示，则 ReplaceView(old,new,false)，恢复原工作视图。核对原布局 tag、唯一活动视图 tag、工作视图 tag 后才卸载。Open 不支持制图 |
+| [LayoutCollection.Current](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a64322.html)、[Layout.Open/ReplaceView](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a64166.html) | 比较当前与原布局 tag，仅不同时 Open；若临时建模视图仍显示，则 ReplaceView(old,new,false)，恢复原工作视图。核对原布局 tag、唯一活动视图 tag、工作视图 tag 后才卸载。Open 不支持制图 |
 | [StudioImageCaptureBuilder](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a52978.html) | SourceType.WorkView（自 NX2206）只捕获工作视图；NativeFileBrowser 指定 .png，Custom/Pixels，SetImageDimensionsInteger 的顺序是高度、宽度，因此 [1200,1600]；透明背景、EnhanceEdges、Commit/finally Destroy |
 
 **文档保证与实现推断分开**：官方保证隔离视图在不再显示时结束其隔离状态；没有找到专门的 EndIsolate 接口。本次使用上述布局/视图公开 API 组成恢复流程并检查结果，未在 NX 本机证实该组合在本站点能完整退出临时视图。单件及连续两轮实机验收必须先于大树运行。恢复失败时停止新加载并保留当前加载集合，避免关闭仍被视图引用的组件；不承诺已验证彻底无弹窗。
@@ -87,6 +87,14 @@
 - [UI.UserInterfacePreferences](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a81018.html) / [DisplayAlertsOnWarnings](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a72018.html) 的文档范围为特征创建/编辑/更新诊断，不是已证实的只读通知开关。
 - [MessageBoxTester](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38486.html) 要求 Automated Testing Studio 许可；自动选择问题框答案不适合作为通用插件策略。
 - 不使用已退役的 SetWorkPartQuietly，不用 UF SetDisplayPart 替换后就假定没有相同显示副作用。
+
+## 925052：Layout.Open 不能重复打开当前布局
+
+后续实测中隔离创建、图像捕获均已返回成功，PNG 文件存在，但 Restore image layout 内的 Open 返回 925052「要打开的布局已显示」。该错误含义来自用户运行日志；官方 Layout.Open 文档只说明打开布局，未承诺对当前布局重复调用可成功。旧实现与测试替身把它当作可重复调用，是本次缺陷。
+
+修复使用上表已核对的 LayoutCollection.Current、Tag 和 ReplaceView：原布局仍为当前布局时跳过 Open，直接恢复隔离视图；布局确实变化时才打开原布局。继续核对原布局、唯一活动视图及工作视图，恢复失败仍停止并保留当前加载集合，不以吞掉错误替代恢复。为 ReplaceView 单独记录调用阶段。
+
+测试替身加入已显示布局重复 Open 抛 925052 的条件，旧代码复现失败，修复后通过；覆盖连续隔离两轮后卸载及真实替换失败仍停止。最新用户实测尚未证明图片内容正确或原生退出成功，这两项仍需本地验证。
 
 ## 关闭后的 3615013：失效对象与会话复核
 
@@ -110,4 +118,4 @@
 
 ## 验证边界
 
-本次已执行 DLX/XML/映射检查及 108 项独立 C# 断言。数学/文本/所有权策略之外，真实资源管理器、显示上下文、截图代码与显式 NX 测试替身组合编译并验证控制流；替身不证明官方 API 签名或原生行为。还以官方 net472 框架引用完成同一测试程序的编译，未在 Framework 4.7.2 运行。未执行 NX SDK 全量编译、NX 原生 DLX 加载、PNG 渲染、Teamcenter 实机测试或本地签名；这些由 [本地 agent 交接](../LOCAL_AGENT_PROMPT.md) 列出。纯算法测试通过不等于 NX 2512 集成验收通过。
+本次已执行 DLX/XML/映射检查及 115 项独立 C# 断言。数学/文本/所有权策略之外，真实资源管理器、显示上下文、截图代码与显式 NX 测试替身组合编译并验证控制流；替身不证明官方 API 签名或原生行为。还以官方 net472 框架引用完成同一测试程序的编译，未在 Framework 4.7.2 运行。未执行 NX SDK 全量编译、NX 原生 DLX 加载、PNG 渲染、Teamcenter 实机测试或本地签名；这些由 [本地 agent 交接](../LOCAL_AGENT_PROMPT.md) 列出。纯算法测试通过不等于 NX 2512 集成验收通过。

@@ -81,9 +81,13 @@ internal static class ImageViewTests
             Fails(() => new NxImageContext(failedSession, failedComponent), "Partial isolate creation failure propagates");
             Check(failedRoot.Views.WorkView == saved && failedRoot.Views.Active[0] == saved, "Partial isolate creation is restored");
             failedRoot.ComponentAssembly.FailAfterCreate = false;
+            Layout originalLayout = failedRoot.Layouts.Current;
             failedRoot.Layouts.Current.LeaveIsolateOnOpen = true;
-            using (var context = new NxImageContext(failedSession, failedComponent)) { }
+            using (var context = new NxImageContext(failedSession, failedComponent))
+                failedRoot.Layouts.Current = new Layout { Owner = failedRoot, Tag = (Tag)1003, Original = saved };
             Check(failedRoot.Views.WorkView == saved && failedRoot.Views.Active[0] == saved, "Layout replacement fallback restores original view");
+            Check(failedRoot.Layouts.Current == originalLayout && originalLayout.OpenCalls == 1,
+                "A different current layout still requires opening the captured layout");
 
             // Restoring a camera may fail; overlay restoration must still run.
             var state = new NxViewState(saved);
@@ -104,16 +108,40 @@ internal static class ImageViewTests
             {
                 keptSession.Parts.Items.Add((BasePart)keptComponent.Prototype);
                 var context = new NxImageContext(keptSession, keptComponent);
-                keptRoot.Layouts.Current.FailOpen = true;
+                keptRoot.Layouts.Current.FailReplace = true;
                 Fails(context.Dispose, "Failed layout restore propagates");
                 Check(AssemblyTraverser.Stopped, "Failed restoration stops further loading");
                 resources.ReleaseUnused("failed image restore");
                 Check(!((BasePart)keptComponent.Prototype).Closed, "Parts referenced by an unrestored view stay loaded");
             }
+            CheckRepeatedIsolateCleanup();
             TransformChecks();
         }
         finally { Directory.Delete(output, true); }
         return _checks;
+    }
+    private static void CheckRepeatedIsolateCleanup()
+    {
+        Part root; Component component;
+        Session session = Setup(out root, out component);
+        Layout layout = root.Layouts.Current;
+        View original = root.Views.WorkView;
+        session.Parts.Items.Remove((BasePart)component.Prototype);
+        using (var resources = new NxPartResources(session))
+        {
+            for (int i = 0; i < 2; ++i)
+            {
+                Part temporary = session.Add("temporary image target", PartLoadState.PartiallyLoaded);
+                component.Prototype = temporary;
+                using (var context = new NxImageContext(session, component)) { }
+                Check(layout.OpenCalls == 0 && layout.ReplaceCalls == i + 1,
+                    "Current layout is not opened again; isolate view is replaced on each run");
+                Check(root.Views.WorkView == original && root.Views.Active[0] == original && !AssemblyTraverser.Stopped,
+                    "Repeated isolation restores the original view without a false stop");
+                Check(resources.ReleaseUnused("restored isolate") && temporary.Closed && session.Parts.Items.Count == 1,
+                    "Successful layout restoration permits timely temporary-part release");
+            }
+        }
     }
     private static void TransformChecks()
     {
@@ -186,14 +214,25 @@ namespace NXOpen
         public Part Owner;
         public Tag Tag;
         public View Original;
-        public bool FailOpen, LeaveIsolateOnOpen;
+        public bool FailOpen, LeaveIsolateOnOpen, FailReplace;
+        public int OpenCalls, ReplaceCalls;
         public View[] GetViews() { return new[] { Original }; }
         public void Open()
         {
+            ++OpenCalls;
+            // Observed in NX 2512: Open is not idempotent for the current layout.
+            if (Owner.Layouts.Current != null && Owner.Layouts.Current.Tag == Tag)
+                throw new NXException(925052);
             if (FailOpen) throw new Exception("layout open failed");
+            Owner.Layouts.Current = this;
             if (!LeaveIsolateOnOpen) Owner.Views.Active = new[] { Original };
         }
-        public void ReplaceView(ModelingView from, ModelingView to, bool fit) { Owner.Views.Active = new View[] { to }; }
+        public void ReplaceView(ModelingView from, ModelingView to, bool fit)
+        {
+            ++ReplaceCalls;
+            if (FailReplace) throw new Exception("layout replace failed");
+            Owner.Views.Active = new View[] { to };
+        }
     }
     public sealed class DisplayManager { public void MakeUpToDate() { } }
     public sealed class ErrorInfo { public int ErrorCode = 1; public string Description = "test error"; }
