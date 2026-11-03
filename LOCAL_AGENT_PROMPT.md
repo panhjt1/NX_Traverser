@@ -6,16 +6,17 @@
 
 你在 Windows + Siemens NX 2512 + Teamcenter 集成环境工作。请完成下面的 SDK 编译、签名、实机验证，再部署测试版本。先阅读 [官方 API 核对与审查](docs/NX2512_API_REVIEW.md)。云端已经修改源码和资产，但**没有声称 NX 编译或 Teamcenter 无弹窗验收通过**。
 
-不要为了通过测试而签出源部件、保存修改、修改发布状态/ACL、清除 IsModified、删除用户部件、屏蔽全部 NX 对话框。不要把 1946 的 DLL 混入 2512 引用。保留本地已有未提交修改；拉分支发生冲突时先检查并解决，不使用 reset --hard。
+不要为了通过测试而签出源部件、保存修改、修改发布状态/ACL、清除 IsModified、删除用户部件、屏蔽全部 NX 对话框。不要把 1946 的 DLL 混入 2512 引用。保留本地已有源码修改、项目配置和验证记录，不用新压缩包直接覆盖旧目录。
 
-## 取代码
+## 通过浏览器下载源码 ZIP（本地不要求 Git 联网）
 
-```powershell
-git fetch origin
-git switch --track origin/fix/nx2512-teamcenter-readonly
-```
+用户的浏览器与本地 agent 网络环境隔离，使用浏览器下载源代码压缩包，再交给本地 agent。不要要求本地执行 git clone/fetch/pull，也不要假设解压目录包含 `.git`。
 
-如果该分支已存在，使用 `git switch fix/nx2512-teamcenter-readonly`，然后 `git pull --ff-only`。源码和说明都在 GitHub，取代码不需要 OpenAI 云服务。
+1. 在可访问 GitHub 的浏览器下载 [当前分支源码 ZIP](https://github.com/panhjt1/NX_Traverser/archive/refs/heads/fix/nx2512-teamcenter-readonly.zip)。也可打开 [分支页面](https://github.com/panhjt1/NX_Traverser/tree/fix/nx2512-teamcenter-readonly)，确认分支名称后选 **Code → Download ZIP**，不要下载 main 分支。
+2. 优先使用云端 agent 每次交付的**固定提交 ZIP 链接**，记录其提交号。分支 ZIP 会随更新变化，仅凭文件名不能确定版本。
+3. 将 ZIP 传入本地工作环境，解压到新的独立目录。若旧目录有本地修复，先备份并比较差异，再合并；不要直接覆盖。下载和传输不依赖 OpenAI 云存储。
+4. 在含 `NX_Traverser.csproj` 的解压目录中执行下方构建命令。构建脚本不调用 Git，也不自动下载依赖；NX 引用、MSBuild 和相应 Targeting Pack 需由本机提供。
+5. 如需额外开发包，通过可联网浏览器取得安装包/官方引用包后按公司允许的方式传入本地，不假设本地 agent 能执行在线安装或 NuGet 还原。
 
 ## 本次改动
 
@@ -36,7 +37,7 @@ git switch --track origin/fix/nx2512-teamcenter-readonly
 
 1. 记录实际 NX 2512 maintenance build、Teamcenter 版本、NX 启动方式、VS/MSBuild 版本。确认运行中的 NX 与引用 DLL 来自同一 2512 安装。
 2. 默认使用 Visual Studio 2022（或支持 C# 7.3、MSBuild 15.8+ 的 VS / Build Tools）和 **.NET Framework 4.8 Developer/Targeting Pack**。若显式试编译 v4.7.2，则需要对应 4.7.2 开发包。本插件不使用 net8/managed_core。只有运行库并不代表安装了开发引用包。
-3. 使用 **NX 2512 Block UI Styler** 打开 `ClassLibrary1.dlx`。确认中文标签、9 个 ID、八个英文视角条目、多选视角和 OK/Cancel。若工具要求升级另存，执行后提交该 DLX；不要生成模板覆盖 `UIscripts.cs`。XML 能解析不代表原生 Styler 验证通过。
+3. 使用 **NX 2512 Block UI Styler** 打开 `ClassLibrary1.dlx`。确认中文标签、9 个 ID、八个英文视角条目、多选视角和 OK/Cancel。若工具要求升级另存，执行后将修改的 DLX 纳入回传文件；不要生成模板覆盖 `UIscripts.cs`。XML 能解析不代表原生 Styler 验证通过。
 4. 编译，安装路径以本机实际位置为准：
 
 ```powershell
@@ -130,4 +131,8 @@ dotnet run --project .\tests\CoreTests.csproj -c Release
 
 ## 回传并持续维护
 
-完成后给出：分支/提交、NX/TC/VS 版本、构建与签名结果、DLL/DLX 的最终 SHA256、部署路径、每项验收通过/失败/未测、脱敏日志和复现步骤。若需修代码，提交到同一分支并在本文件更新“改动、验证状态、剩余工作”，也更新 API 依据。不要只交付本机 DLL 而不回传对应源码。
+完成后给出：下载包对应的分支/提交、NX/TC/VS 版本、构建与签名结果、DLL/DLX 的最终 SHA256、部署路径、每项验收通过/失败/未测、脱敏日志和复现步骤。
+
+若修了代码或 DLX，把修改文件按原目录结构打包，并列出新增/修改/删除清单；同步更新本文件的“改动、验证状态、剩余工作”和 API 依据。由用户通过浏览器回传给云端 agent，再由云端 agent 核对并提交到同一 GitHub 分支。本地不需要具备 GitHub 推送能力。不要只交付本机 DLL 而不回传对应源码，也不要把 NX SDK、许可或公司模型放入回传源码包。
+
+本次交付方式更新只调整文档，没有修改插件代码、DLX 或构建逻辑；此前验证状态保持原记录。

@@ -6,6 +6,8 @@
 
 ## 本地编译与部署
 
+通过浏览器 [下载当前开发分支源码 ZIP](https://github.com/panhjt1/NX_Traverser/archive/refs/heads/fix/nx2512-teamcenter-readonly.zip)，或在该分支页面选择 **Code → Download ZIP**。本地 agent 无需 Git 联网。每次解压到新目录并保留旧目录的本地修改；在含 `NX_Traverser.csproj` 的目录中构建。为方便复现，优先使用每次交付提供的固定提交 ZIP 链接，并记录提交号。
+
 将 [LOCAL_AGENT_PROMPT.md](LOCAL_AGENT_PROMPT.md) 交给本地 agent；其中包含取代码、构建、签名、部署及只读环境验收步骤，并在每次修改后维护。
 
 ```powershell
