@@ -96,6 +96,7 @@ internal sealed class NxPartContext : IDisposable
         {
             // Do not continue processing with the wrong assembly/coordinate context.
             AssemblyTraverser.RequestStop();
+            NxPartResources.KeepCurrentPartsOpen();
             RunLog.Error("恢复显示/工作部件失败；已停止遍历", ex);
             throw;
         }

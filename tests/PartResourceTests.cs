@@ -149,6 +149,19 @@ internal static class PartResourceTests
         catch (InvalidOperationException) { failed = true; }
         Check(failed && session.Calls.Count == 1, "Failed preload never enters SetActiveDisplay");
         Check(session.Parts.Work == original && session.Parts.Display == original, "Failed preload leaves original context intact");
+
+        target.ThrowOnLoad = false;
+        using (var resources = new NxPartResources(session))
+        {
+            var context = new NxPartContext(session, target);
+            Part dependency = session.Add("activation dependency", PartLoadState.PartiallyLoaded);
+            session.Parts.LoadCodes = new[] { 641070 }; // Restore changes display but reports a load error.
+            failed = false;
+            try { context.Dispose(); } catch (InvalidOperationException) { failed = true; }
+            Check(failed && AssemblyTraverser.Stopped, "Failed context restoration stops traversal");
+            resources.ReleaseUnused("failed context restore");
+            Check(!target.Closed && !dependency.Closed, "Unverified context restoration retains its loaded dependencies");
+        }
     }
 }
 
@@ -212,8 +225,6 @@ namespace NXOpen
         public string FullPath { get { return Name; } }
         public ViewCollection Views;
         public ViewCollection ModelingViews { get { return Views; } }
-        public LayoutCollection Layouts;
-        public Assemblies.ComponentAssembly ComponentAssembly;
     }
     public sealed class PartCollection
     {
@@ -255,6 +266,7 @@ namespace NXOpen
         public readonly List<string> Calls = new List<string>();
         public readonly DisplayManager DisplayManager = new DisplayManager();
         public Action<View> CaptureObserver;
+        public Gateway.ImageExportBuilder LastImageBuilder;
         public Part Add(string name, PartLoadState state, bool modified = false)
         {
             var part = new Part { Owner = this, Tag = (Tag)(++_next), Name = name, PartLoadState = state, IsModified = modified };

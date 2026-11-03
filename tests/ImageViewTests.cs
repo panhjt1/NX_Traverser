@@ -1,5 +1,5 @@
-// Control-flow doubles only: these do not simulate NX rendering, isolate-view
-// lifecycle, Teamcenter callbacks, or prove compatibility with Siemens binaries.
+// Control-flow doubles only. These do not render PNGs, reproduce NX dialogs,
+// or prove compatibility with Siemens binaries.
 using System;
 using System.IO;
 using NXOpen;
@@ -13,10 +13,10 @@ internal static class ImageViewTests
         if (!ok) throw new Exception("Image regression: " + message);
         ++_checks;
     }
-    private static void Fails(Action action, string message)
+    private static void Fails<T>(Action action, string message) where T : Exception
     {
         bool failed = false;
-        try { action(); } catch (Exception) { failed = true; }
+        try { action(); } catch (T) { failed = true; }
         Check(failed, message);
     }
     private static Session Setup(out Part root, out Component component)
@@ -26,18 +26,24 @@ internal static class ImageViewTests
         root = session.Add("display root", PartLoadState.FullyLoaded);
         session.Parts.BaseWork = root;
         session.Parts.Displayed.Add(root);
-        root.Views = new ViewCollection { Owner = root };
-        var original = new ModelingView { Owner = root, Tag = (Tag)1000, Scale = 7,
-            WcsVisibility = true, TriadVisibility = false, Matrix = new Matrix3x3 { Xx = 1, Yy = 1, Zz = 1 } };
-        root.Views.WorkView = original;
-        root.Views.Active = new View[] { original };
-        root.Views.All.Add(original);
-        root.Layouts = new LayoutCollection { Current = new Layout { Owner = root, Tag = (Tag)1001, Original = original } };
-        root.ComponentAssembly = new ComponentAssembly { Owner = root };
+        root.Views = new ViewCollection { WorkView = NewView(1000) };
+        Part target = session.Add("readonly prototype", PartLoadState.PartiallyLoaded);
+        target.Views = new ViewCollection { WorkView = NewView(1001) };
         component = new Component { Tag = (Tag)2000, OwningPart = root,
-            Parent = new Component { OwningPart = root, Prototype = root },
-            Prototype = session.Add("readonly prototype", PartLoadState.PartiallyLoaded) };
+            Parent = new Component { OwningPart = root, Prototype = root }, Prototype = target };
+        UI.SessionOwner = session;
         return session;
+    }
+    private static View NewView(int tag)
+    {
+        return new View { Tag = (Tag)tag, Scale = 7, WcsVisibility = true, TriadVisibility = false,
+            Matrix = new Matrix3x3 { Xx = 1, Yy = 1, Zz = 1 } };
+    }
+    private static void Capture(Session session, Component component, string output, string name,
+        params ImageExporter.SnapViewType[] views)
+    {
+        using (var context = new NxPartContext(session, (Part)component.Prototype))
+            new ImageExporter(views).Process(component, session, output, name);
     }
     public static int Run()
     {
@@ -45,192 +51,95 @@ internal static class ImageViewTests
         Directory.CreateDirectory(output);
         try
         {
+            var config = new TraversalConfig { filePath = output, flagImageOn = true,
+                viewList = new[] { ImageExporter.SnapViewType.Top } };
+            config.Validate();
+            Check(!config.useIsolatedImageView, "Ordinary capture is the default");
+            config.useIsolatedImageView = true;
+            Fails<NotSupportedException>(config.Validate, "Old isolation configuration is rejected before traversal");
+            Fails<NotSupportedException>(() => new ImageExporter(config.viewList, true), "Direct callers cannot enable isolation");
+
             foreach (bool wcs in new[] { false, true })
                 foreach (bool triad in new[] { false, true })
                 {
                     Part root; Component component;
                     Session session = Setup(out root, out component);
-                    View original = root.Views.WorkView;
-                    original.WcsVisibility = wcs; original.TriadVisibility = triad;
-                    session.CaptureObserver = view => Check(!view.WcsVisibility && !view.TriadVisibility, "Both overlays hidden during capture");
-                    var exporter = new ImageExporter(new[] { ImageExporter.SnapViewType.Trimetric });
-                    Check(!exporter.RequiresPrototypeContext, "Default images do not activate prototypes");
-                    exporter.Process(component, session, output, "image");
-                    Check(root.Views.WorkView == original && root.Views.Active[0] == original && original.Scale == 7,
-                        "Original view restored after isolate");
-                    Check(original.WcsVisibility == wcs && original.TriadVisibility == triad, "Restore exact overlay flags");
-                    Check(session.Parts.Work == root && session.Parts.Display == root && session.Calls.Count == 0,
-                        "No work/display part switch or full-load adapter call");
-                    Check(root.Views.LastBuilder.Destroyed, "Capture builder destroyed");
+                    Part target = (Part)component.Prototype;
+                    View view = target.Views.WorkView;
+                    view.WcsVisibility = wcs; view.TriadVisibility = triad;
+                    session.CaptureObserver = active =>
+                    {
+                        Check(active == view && !active.WcsVisibility && !active.TriadVisibility,
+                            "Target view has both overlays hidden during capture");
+                        Check(session.LastImageBuilder.EnhanceEdges && !session.LastImageBuilder.RegionMode,
+                            "Ordinary full-view capture retains edge enhancement");
+                    };
+                    Capture(session, component, output, "image" + wcs + triad, ImageExporter.SnapViewType.Trimetric);
+                    Check(view.Scale == 7 && view.Matrix.Xx == 1 && view.Matrix.Yy == 1 && view.Matrix.Zz == 1,
+                        "Original camera restored after capture");
+                    Check(view.WcsVisibility == wcs && view.TriadVisibility == triad, "Restore exact overlay flags");
+                    Check(session.Parts.Work == root && session.Parts.Display == root && root.Views.WorkView.Scale == 7,
+                        "Original work/display context and camera survive");
+                    Check(session.Calls.Count == 3 && session.Calls[1] == "display readonly prototype" &&
+                        session.Calls[2] == "display display root", "One target activation and one restoration");
+                    Check(session.LastImageBuilder.Destroyed && File.Exists(session.LastImageBuilder.FileName),
+                        "Builder destroyed and test output created");
                 }
 
             Part failedRoot; Component failedComponent;
             Session failedSession = Setup(out failedRoot, out failedComponent);
-            View saved = failedRoot.Views.WorkView;
+            View saved = ((Part)failedComponent.Prototype).Views.WorkView;
             failedSession.CaptureObserver = view => { throw new IOException("simulated export failure"); };
-            var one = new ImageExporter(new[] { ImageExporter.SnapViewType.Front });
-            Fails(() => one.Process(failedComponent, failedSession, output, "failure"), "Export error propagates");
-            Check(failedRoot.Views.WorkView == saved && saved.WcsVisibility && !saved.TriadVisibility &&
-                failedRoot.Views.LastBuilder.Destroyed, "Failure restores view, overlays and builder");
-            failedSession.CaptureObserver = view => AssemblyTraverser.RequestStop();
-            var two = new ImageExporter(new[] { ImageExporter.SnapViewType.Front, ImageExporter.SnapViewType.Top });
-            Fails(() => two.Process(failedComponent, failedSession, output, "cancel"), "Cancellation prevents second image");
-            Check(failedRoot.Views.WorkView == saved && saved.WcsVisibility && !saved.TriadVisibility, "Cancel restores overlays and original view");
+            Fails<IOException>(() => Capture(failedSession, failedComponent, output, "failure", ImageExporter.SnapViewType.Front),
+                "Export error propagates");
+            Check(saved.Scale == 7 && saved.WcsVisibility && !saved.TriadVisibility && failedSession.LastImageBuilder.Destroyed &&
+                failedSession.Parts.Display == failedRoot, "Export failure restores camera, overlays, context and destroys builder");
+            int captured = 0;
+            failedSession.CaptureObserver = view => { ++captured; AssemblyTraverser.RequestStop(); };
+            Fails<OperationCanceledException>(() => Capture(failedSession, failedComponent, output, "cancel",
+                ImageExporter.SnapViewType.Front, ImageExporter.SnapViewType.Top), "Cancellation prevents second image");
+            Check(captured == 1 && saved.Scale == 7 && saved.WcsVisibility && !saved.TriadVisibility &&
+                failedSession.LastImageBuilder.Destroyed && failedSession.Parts.Display == failedRoot,
+                "Cancellation restores view/context and releases builder");
 
             AssemblyTraverser.Stopped = false;
-            failedRoot.ComponentAssembly.FailAfterCreate = true;
-            Fails(() => new NxImageContext(failedSession, failedComponent), "Partial isolate creation failure propagates");
-            Check(failedRoot.Views.WorkView == saved && failedRoot.Views.Active[0] == saved, "Partial isolate creation is restored");
-            failedRoot.ComponentAssembly.FailAfterCreate = false;
-            Layout originalLayout = failedRoot.Layouts.Current;
-            int changedBefore = failedRoot.Layouts.ChangeCalls;
-            failedRoot.Layouts.LeaveIsolateOnChange = true;
-            using (var context = new NxImageContext(failedSession, failedComponent)) { }
-            Check(failedRoot.Views.WorkView == saved && failedRoot.Views.Active[0] == saved, "Layout replacement fallback restores original view");
-            Check(failedRoot.Layouts.Current == originalLayout && originalLayout.OpenCalls == 0 &&
-                failedRoot.Layouts.ChangeCalls == changedBefore + 1,
-                "ChangeLayout selects the original layout without calling Open on its existing display");
+            var previousBuilder = failedSession.LastImageBuilder;
+            Fails<InvalidOperationException>(() => new ImageExporter(config.viewList).Process(failedComponent, failedSession, output, "wrong"),
+                "Wrong work/display context is rejected");
+            Check(failedSession.LastImageBuilder == previousBuilder, "Wrong context never captures another part");
 
-            // Restoring a camera may fail; overlay restoration must still run.
+            failedSession.CaptureObserver = view => failedSession.LastImageBuilder.SkipOutput = true;
+            Fails<IOException>(() => Capture(failedSession, failedComponent, output, "missing", ImageExporter.SnapViewType.Top),
+                "Commit without an output file is a failure");
+            Check(saved.Scale == 7 && saved.WcsVisibility && !saved.TriadVisibility && failedSession.LastImageBuilder.Destroyed,
+                "Missing output still restores view and destroys builder");
+
+            failedSession.CaptureObserver = view => view.FailTransformRestore = true;
+            Fails<InvalidOperationException>(() => Capture(failedSession, failedComponent, output, "restore", ImageExporter.SnapViewType.Top),
+                "Camera restoration error propagates");
+            Check(AssemblyTraverser.Stopped && saved.WcsVisibility && !saved.TriadVisibility &&
+                failedSession.Parts.Display == failedRoot, "Camera failure restores overlay flags and stops traversal");
+            saved.FailTransformRestore = false;
             var state = new NxViewState(saved);
             saved.FailTransformRestore = true;
             state.Restore(); // Unchanged camera must not be written back.
-            Check(true, "Untouched source view is not rewritten");
-            saved.Scale = 99;
-            saved.WcsVisibility = false; saved.TriadVisibility = true; saved.FailTransformRestore = true;
-            Fails(() => state.Restore(), "Camera restoration error is not swallowed");
-            Check(saved.WcsVisibility && !saved.TriadVisibility, "Overlay restoration attempted even after camera failure");
-            saved.FailTransformRestore = false;
-
-            Part keptRoot; Component keptComponent;
-            Session keptSession = Setup(out keptRoot, out keptComponent);
-            keptRoot.ComponentAssembly.CreateSeparateLayout = false;
-            // Start ownership tracking before opening the temporary target.
-            keptSession.Parts.Items.Remove((BasePart)keptComponent.Prototype);
-            using (var resources = new NxPartResources(keptSession))
-            {
-                keptSession.Parts.Items.Add((BasePart)keptComponent.Prototype);
-                var context = new NxImageContext(keptSession, keptComponent);
-                keptRoot.Layouts.Current.FailReplace = true;
-                Fails(context.Dispose, "Failed layout restore propagates");
-                Check(AssemblyTraverser.Stopped, "Failed restoration stops further loading");
-                resources.ReleaseUnused("failed image restore");
-                Check(!((BasePart)keptComponent.Prototype).Closed, "Parts referenced by an unrestored view stay loaded");
-            }
-            CheckRepeatedIsolateCleanup();
-            CheckFailedLayoutChange(false);
-            CheckFailedLayoutChange(true);
-            CheckNativeTransitionError(580039, false, false, true);
-            CheckNativeTransitionError(580039, true, false, false);
-            CheckNativeTransitionError(580039, false, true, false);
-            CheckNativeTransitionError(925052, false, false, false);
-            CheckNativeTransitionError(580039, false, false, false, true);
-            TransformChecks();
+            Check(true, "Untouched camera is not rewritten");
+            CheckReleaseAfterCapture(output);
         }
         finally { Directory.Delete(output, true); }
         return _checks;
     }
-    private static void CheckRepeatedIsolateCleanup()
+    private static void CheckReleaseAfterCapture(string output)
     {
         Part root; Component component;
         Session session = Setup(out root, out component);
-        Layout layout = root.Layouts.Current;
-        View original = root.Views.WorkView;
-        session.Parts.Items.Remove((BasePart)component.Prototype);
         using (var resources = new NxPartResources(session))
         {
-            for (int i = 0; i < 2; ++i)
-            {
-                Part temporary = session.Add("temporary image target", PartLoadState.PartiallyLoaded);
-                component.Prototype = temporary;
-                root.ComponentAssembly.CreateSeparateLayout = i == 1;
-                using (var context = new NxImageContext(session, component)) { }
-                Check(layout.OpenCalls == 0 && layout.ReplaceCalls == 1 && root.Layouts.ChangeCalls == i,
-                    "Same-layout and separate-layout isolation both restore without Open");
-                Check(root.Views.WorkView == original && root.Views.Active[0] == original && !AssemblyTraverser.Stopped,
-                    "Repeated isolation restores the original view without a false stop");
-                Check(resources.ReleaseUnused("restored isolate") && temporary.Closed && session.Parts.Items.Count == 1,
-                    "Successful layout restoration permits timely temporary-part release");
-            }
+            Capture(session, component, output, "release", ImageExporter.SnapViewType.Top);
+            Check(resources.ReleaseUnused("capture restored") && ((Part)component.Prototype).Closed,
+                "Used initially clean partial prototype is released after restoring context");
+            Check(session.Parts.Items.Count == 1 && !root.Closed, "Initial displayed part is preserved");
         }
-    }
-    private static void CheckFailedLayoutChange(bool noOp)
-    {
-        Part root; Component component;
-        Session session = Setup(out root, out component);
-        session.Parts.Items.Remove((BasePart)component.Prototype);
-        using (var resources = new NxPartResources(session))
-        {
-            Part temporary = session.Add("failed restore target", PartLoadState.PartiallyLoaded);
-            component.Prototype = temporary;
-            var context = new NxImageContext(session, component);
-            root.Layouts.FailChange = !noOp;
-            root.Layouts.RefuseChange = noOp;
-            Fails(context.Dispose, "Failed or ineffective ChangeLayout must not report restoration success");
-            Check(AssemblyTraverser.Stopped, "Unrestored separate layout stops traversal");
-            resources.ReleaseUnused("failed layout change");
-            Check(!temporary.Closed, "Unrestored separate layout keeps its referenced parts loaded");
-        }
-    }
-    private static void CheckNativeTransitionError(int code, bool beforeChange, bool keepIsolate, bool recover, bool keepDisclosure = false)
-    {
-        Part root; Component component;
-        Session session = Setup(out root, out component);
-        Layout layout = root.Layouts.Current;
-        View original = root.Views.WorkView;
-        session.Parts.Items.Remove((BasePart)component.Prototype);
-        using (var resources = new NxPartResources(session))
-        {
-            Part temporary = session.Add("native transition target", PartLoadState.PartiallyLoaded);
-            component.Prototype = temporary;
-            var context = new NxImageContext(session, component);
-            Check(root.Views.Active.Length == 2 && root.Views.Active[1] == original,
-                "Isolate and original views can remain active together, as in the supplied log");
-            root.Layouts.NativeTransitionError = code;
-            root.Layouts.ThrowBeforeChange = beforeChange;
-            root.Layouts.LeaveIsolateOnChange = keepIsolate;
-            if (keepDisclosure) root.Views.DisclosedOverride = new[] { context.View };
-            if (recover)
-            {
-                context.Dispose();
-                Check(root.Layouts.Current == layout && root.Views.Active.Length == 1 &&
-                    root.Views.WorkView == original && !AssemblyTraverser.Stopped,
-                    "580039 is recoverable only after actual layout/view restoration");
-                Check(resources.ReleaseUnused("verified native error") && temporary.Closed,
-                    "Verified recovery allows releasing the temporary target");
-            }
-            else
-            {
-                Fails(context.Dispose, "Unrecovered state or another native error must propagate");
-                resources.ReleaseUnused("unverified native error");
-                Check(AssemblyTraverser.Stopped && !temporary.Closed,
-                    "Keep referenced parts when native error recovery is not proven");
-            }
-        }
-    }
-    private static void TransformChecks()
-    {
-        double[,] camera = { { 0, 0, 1 }, { 0, 1, 0 }, { -1, 0, 0 } };
-        double[,] occurrence = { { 0, -2, 0, 321 }, { 2, 0, 0, -777 }, { 0, 0, 2, 456 }, { 0, 0, 0, 1 } };
-        double[,] corrected = ExportUtilities.PrototypeViewInAssembly(camera, occurrence);
-        // C' * R = C for each basis vector; camera and occurrence rotate about different axes.
-        bool matches = true;
-        for (int r = 0; r < 3; ++r)
-            for (int c = 0; c < 3; ++c)
-            {
-                double actual = 0;
-                for (int k = 0; k < 3; ++k) actual += corrected[r, k] * occurrence[k, c] / 2;
-                matches &= Math.Abs(actual - camera[r, c]) < 1e-10;
-            }
-        Check(matches, "Occurrence rotation, translation and uniform scale preserve prototype camera basis");
-        occurrence[0, 1] = 2;
-        Fails(() => ExportUtilities.PrototypeViewInAssembly(camera, occurrence), "Reject reflection");
-        occurrence[0, 1] = -4;
-        Fails(() => ExportUtilities.PrototypeViewInAssembly(camera, occurrence), "Reject nonuniform scale");
-        occurrence[0, 1] = -2; occurrence[0, 0] = 1;
-        Fails(() => ExportUtilities.PrototypeViewInAssembly(camera, occurrence), "Reject shear");
-        occurrence[0, 0] = double.NaN;
-        Fails(() => ExportUtilities.PrototypeViewInAssembly(camera, occurrence), "Reject invalid transform");
     }
 }
 
@@ -238,167 +147,31 @@ namespace NXOpen
 {
     public struct Matrix3x3 { public double Xx, Xy, Xz, Yx, Yy, Yz, Zx, Zy, Zz; }
     public struct Point3d { public double X, Y, Z; }
-    public class View
+    public sealed class View
     {
         public enum Canned { Trimetric, Isometric, Top, Front, Right, Back, Bottom, Left }
         public enum ScaleAdjustment { Fit }
-        public Part Owner;
         public Tag Tag;
         public Matrix3x3 Matrix;
         public Point3d Origin;
         public double Scale;
         public bool WcsVisibility, TriadVisibility, FailTransformRestore;
-        public void MakeWork() { Owner.Views.WorkView = this; }
-        public void Expand() { Owner.Views.Expanded = true; MakeWork(); }
         public void SetRotationTranslationScale(Matrix3x3 matrix, Point3d origin, double scale)
         {
-            if (FailTransformRestore) throw new Exception("restore failed");
+            if (FailTransformRestore) throw new InvalidOperationException("restore failed");
             Matrix = matrix; Origin = origin; Scale = scale;
         }
-        public void Orient(Canned canned, ScaleAdjustment fit) { Matrix = new Matrix3x3 { Xx = 1, Yy = 1, Zz = 1 }; Scale = 1; }
-        public void Orient(Matrix3x3 matrix) { Matrix = matrix; }
-        public void Fit() { Scale = 1; }
+        public void Orient(Canned canned, ScaleAdjustment fit)
+        { Matrix = new Matrix3x3 { Xy = 1, Yx = -1, Zz = 1 }; Scale = 1; }
     }
-    public sealed class ModelingView : View { }
-    public sealed class ViewCollection
-    {
-        public Part Owner;
-        public View WorkView;
-        public View[] Active;
-        public View[] DisclosedOverride;
-        public readonly System.Collections.Generic.List<View> All = new System.Collections.Generic.List<View>();
-        public bool Expanded;
-        public Display.StudioImageCaptureBuilder LastBuilder;
-        public View[] GetActiveViews() { return Active; }
-        public View[] GetDisclosedModelViews() { return DisclosedOverride ?? Active; }
-        public View[] ToArray() { return All.ToArray(); }
-        public bool IsWorkViewExpanded() { return Expanded; }
-        public void UnexpandWork() { Expanded = false; }
-        public Display.StudioImageCaptureBuilder CreateStudioImageCaptureBuilder()
-        { return LastBuilder = new Display.StudioImageCaptureBuilder { Owner = Owner }; }
-    }
-    public sealed class LayoutCollection
-    {
-        private Layout _current;
-        private readonly System.Collections.Generic.List<Layout> _all = new System.Collections.Generic.List<Layout>();
-        public Layout Current
-        {
-            get { return _current; }
-            set { _current = value; if (value != null && !_all.Contains(value)) _all.Add(value); }
-        }
-        public Layout[] ToArray() { return _all.ToArray(); }
-        public bool LeaveIsolateOnChange, FailChange, RefuseChange;
-        public int NativeTransitionError;
-        public bool ThrowBeforeChange;
-        public int ChangeCalls;
-        public void ChangeLayout(Layout layout)
-        {
-            ++ChangeCalls;
-            if (NativeTransitionError != 0 && ThrowBeforeChange) throw new NXException(NativeTransitionError);
-            if (FailChange) throw new Exception("layout change failed");
-            if (RefuseChange) return;
-            Current = layout;
-            if (!LeaveIsolateOnChange) layout.Owner.Views.Active = new[] { layout.Original };
-            if (NativeTransitionError != 0) throw new NXException(NativeTransitionError);
-        }
-    }
-    public sealed class Layout
-    {
-        public Part Owner;
-        public Tag Tag;
-        public View Original;
-        public bool FailReplace;
-        public bool AlreadyDisplayed = true;
-        public int OpenCalls, ReplaceCalls;
-        public bool DisplayStatus { get { return Owner.Layouts.Current == this; } }
-        public View[] GetViews() { return new[] { Original }; }
-        public void Open()
-        {
-            ++OpenCalls;
-            // Reported NX state: the original layout rejects Open even when
-            // Layouts.Current is a different layout created by isolation.
-            if (AlreadyDisplayed)
-                throw new NXException(925052);
-            Owner.Layouts.Current = this;
-            Owner.Views.Active = new[] { Original };
-        }
-        public void ReplaceView(ModelingView from, ModelingView to, bool fit)
-        {
-            ++ReplaceCalls;
-            if (FailReplace) throw new Exception("layout replace failed");
-            Owner.Views.Active = new View[] { to };
-        }
-    }
+    public sealed class ViewCollection { public View WorkView; }
     public sealed class DisplayManager { public void MakeUpToDate() { } }
-    public sealed class ErrorInfo { public int ErrorCode = 1; public string Description = "test error"; }
-    public sealed class ErrorList : IDisposable
-    {
-        public int Length;
-        public ErrorInfo GetErrorInfo(int index) { return new ErrorInfo(); }
-        public void Dispose() { }
-    }
     public sealed class UI
     {
+        public static Session SessionOwner;
         public static UI GetUI() { return new UI(); }
-        public Gateway.ImageExportBuilder CreateImageExportBuilder() { return new Gateway.ImageExportBuilder(); }
-    }
-}
-namespace NXOpen.Assemblies
-{
-    public sealed class ComponentAssembly
-    {
-        public Part Owner;
-        public bool FailAfterCreate;
-        public bool CreateSeparateLayout = true;
-        public ErrorList CreateIsolateViewWithComponents(Component[] components, out View isolated)
-        {
-            isolated = new ModelingView { Owner = Owner, Tag = (Tag)1002, WcsVisibility = true,
-                TriadVisibility = true, Matrix = new Matrix3x3 { Xx = 1, Yy = 1, Zz = 1 } };
-            View original = Owner.Views.WorkView;
-            Owner.Views.All.Add(isolated);
-            Owner.Views.Active = new[] { isolated, original };
-            if (CreateSeparateLayout)
-                Owner.Layouts.Current = new Layout { Owner = Owner, Tag = (Tag)1003, Original = isolated };
-            return new ErrorList { Length = FailAfterCreate ? 1 : 0 };
-        }
-    }
-}
-namespace NXOpen.UF
-{
-    public sealed class UFSession
-    {
-        public readonly UFAssem Assem = new UFAssem();
-        public static UFSession GetUFSession() { return new UFSession(); }
-    }
-    public sealed class UFAssem
-    {
-        public void AskViewExplosion(Tag view, out Tag explosion) { explosion = Tag.Null; }
-        public void AskTransformOfOcc(Tag component, double[,] matrix)
-        { for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) matrix[r, c] = r == c ? 1 : 0; }
-    }
-}
-namespace NXOpen.Display
-{
-    public sealed class StudioImageCaptureBuilder
-    {
-        public enum SourceType { WorkView }
-        public enum DrawingSizeEnumType { Custom }
-        public enum UnitsEnumType { Pixels }
-        public enum BackgroundOptions { Transparent }
-        public Part Owner;
-        public SourceType Source;
-        public string NativeFileBrowser;
-        public DrawingSizeEnumType DrawingSizeEnum;
-        public UnitsEnumType UnitsEnum;
-        public BackgroundOptions BackgroundOption;
-        public bool EnhanceEdges, Destroyed;
-        public void SetImageDimensionsInteger(int[] dimensions) { }
-        public void Commit()
-        {
-            if (Owner.Owner.CaptureObserver != null) Owner.Owner.CaptureObserver(Owner.Views.WorkView);
-            File.WriteAllText(NativeFileBrowser, "Fake output: NOT an NX-rendered image");
-        }
-        public void Destroy() { Destroyed = true; }
+        public Gateway.ImageExportBuilder CreateImageExportBuilder()
+        { return SessionOwner.LastImageBuilder = new Gateway.ImageExportBuilder { Owner = SessionOwner }; }
     }
 }
 namespace NXOpen.Gateway
@@ -407,11 +180,16 @@ namespace NXOpen.Gateway
     {
         public enum FileFormats { Png }
         public enum BackgroundOptions { Transparent }
-        public bool RegionMode, EnhanceEdges;
+        public Session Owner;
+        public bool RegionMode, EnhanceEdges, Destroyed, SkipOutput;
         public FileFormats FileFormat;
         public string FileName;
         public BackgroundOptions BackgroundOption;
-        public void Commit() { File.WriteAllText(FileName, "Fake legacy output"); }
-        public void Destroy() { }
+        public void Commit()
+        {
+            if (Owner.CaptureObserver != null) Owner.CaptureObserver(Owner.Parts.Display.Views.WorkView);
+            if (!SkipOutput) File.WriteAllText(FileName, "Fake output: NOT an NX-rendered image");
+        }
+        public void Destroy() { Destroyed = true; }
     }
 }

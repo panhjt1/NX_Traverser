@@ -16,8 +16,8 @@ public class TraversalConfig
     
     public string coordinateSelection { get; set; }
 
-    // Default screenshot path avoids making read-only prototypes active.
-    // False explicitly selects the legacy prototype-display path (may prompt).
+    // Compatibility with earlier callers only. Isolation is no longer supported:
+    // it creates extra windows and contaminates exported images with overlays.
     public bool useIsolatedImageView { get; set; }
 
     // Root is level 0. Retain the original limit, now configurable.
@@ -32,12 +32,14 @@ public class TraversalConfig
         flagXYZOn = false;
         viewList = new ImageExporter.SnapViewType[0];
         coordinateSelection = "ACS";
-        useIsolatedImageView = true;
+        useIsolatedImageView = false;
         maxDepth = 5;
     }
 
     public void Validate()
     {
+        if (useIsolatedImageView)
+            throw new NotSupportedException("隔离截图已停用：会产生额外窗口及绿色边框/编号。请移除 useIsolatedImageView=true。");
         if (string.IsNullOrWhiteSpace(filePath))
             throw new ArgumentException("请选择输出文件夹。");
         filePath = System.IO.Path.GetFullPath(filePath.Trim());

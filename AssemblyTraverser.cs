@@ -55,8 +55,7 @@ public sealed class AssemblyTraverser
             RunLog.Write("输出目录: " + output);
             RunLog.Write("每个匹配原型导出一次；匹配装配后不再单独导出其后代。坐标系=" + _config.coordinateSelection);
             RunLog.Write("逐节点释放临时加载部件；保留原有完整加载/已修改/活动部件。原有干净部分加载部件被本次使用后可卸载。");
-            if (_config.flagImageOn) RunLog.Write("截图模式=" + (_config.useIsolatedImageView ?
-                "装配内临时隔离；隐藏 WCS/三重轴；按当前组件参考集显示" : "原型显示激活（可能出现只读提示）"));
+            if (_config.flagImageOn) RunLog.Write("截图模式=普通原型视图；隐藏 WCS/三重轴；不创建隔离窗口。只读激活提示尚未解决。");
             if (_config.flagXYZOn) RunLog.Write("精确测量仍需原型上下文，可能触发只读部件激活提示。");
             try
             {
@@ -114,21 +113,25 @@ public sealed class AssemblyTraverser
                 bool wasModified = part.IsModified;
                 try
                 {
-                    foreach (ITransactionHandler handler in _handlers)
+                    int completedInContext = 0;
+                    // Both exports use the same prototype; activate/restore only
+                    // once per matched part, including combined image + measure.
+                    using (var context = new NxPartContext(session, part))
                     {
-                        if (StopRequested) break;
-                        string stage = handler.GetType().Name + " " + id;
-                        try
+                        foreach (ITransactionHandler handler in _handlers)
                         {
-                            RunLog.Write("[Begin] " + stage);
-                            using (var context = handler.RequiresPrototypeContext ? new NxPartContext(session, part) : null)
+                            if (StopRequested) break;
+                            string stage = handler.GetType().Name + " " + id;
+                            try
                             {
+                                RunLog.Write("[Begin] " + stage);
                                 handler.Process(comp, session, output, id + "_" + name);
+                                ++completedInContext;
                             }
-                            ++_completed;
+                            catch (Exception ex) { ++_failed; RunLog.Error(stage, ex); }
                         }
-                        catch (Exception ex) { ++_failed; RunLog.Error(stage, ex); }
                     }
+                    _completed += completedInContext;
                 }
                 finally
                 {
