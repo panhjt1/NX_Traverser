@@ -6,7 +6,6 @@ using NXOpen.Gateway;
 
 public sealed class ImageExporter : ITransactionHandler
 {
-    public bool RequiresPrototypeContext { get { return false; } }
     public enum SnapViewType { Trimetric, Isometric, Top, Front, Right, Back, Bottom, Left }
     private readonly SnapViewType[] _views;
 
@@ -19,14 +18,15 @@ public sealed class ImageExporter : ITransactionHandler
 
     public void Process(Component comp, Session session, string outputFolder, string descriptiveName)
     {
-        Part part = comp.Prototype as Part;
-        if (part == null) throw new InvalidOperationException("无法取得截图原型。");
-        using (var context = new NxAssemblyImageContext(session, comp))
-            Capture(comp, part, context, outputFolder, descriptiveName);
+        using (var context = new NxAssemblyExportContext(session, comp))
+            Process(context, outputFolder, descriptiveName);
     }
 
-    private void Capture(Component comp, Part part, NxAssemblyImageContext context, string outputFolder, string descriptiveName)
+    public void Process(NxAssemblyExportContext context, string outputFolder, string descriptiveName)
     {
+        Component comp = context.Target;
+        Part part = context.TargetPart;
+        if (part == null) throw new InvalidOperationException("无法取得截图原型。");
         View view = context.View;
         string stem = ExportUtilities.SafeFileStem(descriptiveName, part.FullPath + "|" + descriptiveName);
         try

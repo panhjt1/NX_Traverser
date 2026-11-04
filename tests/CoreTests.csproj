@@ -11,7 +11,7 @@
     <Compile Include="PartResourceTests.cs" />
     <Compile Include="ImageViewTests.cs" />
     <Compile Include="../NxViewState.cs" Link="NxViewState.cs" />
-    <Compile Include="../NxAssemblyImageContext.cs" Link="NxAssemblyImageContext.cs" />
+    <Compile Include="../NxAssemblyExportContext.cs" Link="NxAssemblyExportContext.cs" />
     <Compile Include="../NxGeometry.cs" Link="NxGeometry.cs" />
     <Compile Include="../TraversalConfig.cs" Link="TraversalConfig.cs" />
     <Compile Include="../ImageExporter.cs" Link="ImageExporter.cs" />
@@ -20,6 +20,7 @@
     <Compile Include="../ExportUtilities.cs" Link="ExportUtilities.cs" />
     <Compile Include="../PartLifetime.cs" Link="PartLifetime.cs" />
     <Compile Include="../NxPartResources.cs" Link="NxPartResources.cs" />
-    <Compile Include="../NxPartContext.cs" Link="NxPartContext.cs" />
+    <Compile Include="../BoundingBoxExporter.cs" Link="BoundingBoxExporter.cs" />
+    <Compile Include="BoundingBoxExportTests.cs" />
   </ItemGroup>
 </Project>

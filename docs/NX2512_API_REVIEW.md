@@ -1,6 +1,6 @@
 # NX 2512 官方 API 核对与审查记录
 
-核对日期：2026-11-04。基线：`2470a54`。NX API 核对以 **Siemens 官方 2512 文档**为依据，不把旧版社区示例视为新版本 API；用户运行证据和 Microsoft 构建资料另行注明。官方文档浏览器页面动态加载，本文链接到同一文档的正文或参考类。
+核对日期：2026-11-04。本次基线：`5478c9e`。NX API 核对以 **Siemens 官方 2512 文档**为依据，不把旧版社区示例视为新版本 API；用户运行证据和 Microsoft 构建资料另行注明。官方文档浏览器页面动态加载，本文链接到同一文档的正文或参考类。
 
 ## 版本、构建和部署
 
@@ -28,12 +28,12 @@
 | `BlockDialog.Show` | [BlockDialog](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38314.html)，自 NX2206 弃用 | 改 `Launch()`，只接受 `DialogResponse.Ok`；Apply 只验证，取消不执行 |
 | Apply/Initialize 回调 | [Block Styler callbacks](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/nx_api/nxopen_prog_guide/ttj1734216502825/wba1734216502952/block_styler_callbacks.html) | 即使 DLX 只显示 OK/Cancel 也保留必需回调 |
 | `UFSession.UI`、猜测的 `AskSuppressDialogs/SetSuppressDialogs` | [UFSession](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a80986.html)、[UFUi](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a80778.html)：会话属性为 `Ui`，没有原代码猜测的抑制接口 | 删除整段不存在/未证实的调用和反射常量，不使用“吞掉所有对话框”策略 |
-| `SetActiveDisplay`、工作组件恢复 | [PartCollection](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a70134.html) | 仅测量使用 `ReplaceExisting` + `SameAsDisplay` 原型上下文，截图在原装配执行；恢复原 display/work occurrence，使用 `PreserveRefset`；释放加载状态 |
-| 按需加载/只读诊断 | [BasePart](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38266.html)、[ComponentAssembly](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a37866.html) | `OpenComponents(ComponentOnly)`、`LoadThisPartPartially/Fully`；检查加载结果；使用 `IsReadOnly/IsModified` 记录状态 |
+| `SetActiveDisplay`、工作组件恢复 | [PartCollection](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a70134.html) | 本次已完全移除 NxPartContext；测量与截图均留在原 work/display，不再使用此激活接口 |
+| 按需加载/只读诊断 | [BasePart](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38266.html)、[ComponentAssembly](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a37866.html) | `OpenComponents(ComponentOnly)`、`LoadThisPartPartially`；检查加载结果；使用 `IsReadOnly/IsModified` 记录状态 |
 | 包围盒坐标含义 | [UF_MODL_ask_bounding_box_exact](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_modl/global.html#UF_MODL_ask_bounding_box_exact)、[UFModl .NET](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a79234.html) | `Tag.Null` 表示当前 WCS；CSYS 必须位于当前 work part 上下文；八角点必须使用方向向量，不可直接 `min + distances` |
-| ACS/WCS | [UFCsys](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a77982.html)、[UF_CSYS](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_csys/global.html)、[WCS](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a82066.html) | ACS 用临时单位矩阵 CSYS；WCS 使用目标原型的 `WCS.CoordinateSystem.Tag`，直接请求按该坐标系对齐的精确包围盒 |
+| ACS/WCS | [UFCsys](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a77982.html)、[UF_CSYS](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_csys/global.html)、[WCS](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a82066.html) | 读取目标 ACS/WCS 方向，经实例放置旋转转换到原装配；WCS 原点换算单位后变换。均在原工作装配创建临时 CSYS，不把原型 WCS tag 直接传给装配查询 |
 | 临时对象清理 | [UF_OBJ_delete_object](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_obj/global.html#UF_OBJ_delete_object) | 只删除本次创建的临时 CSYS/矩阵，不修改、替换或删除源 WCS |
-| 装配体测量 | [Component.FindOccurrence](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a37862.html) 及上述 UF_MODL 文档 | 后代使用 occurrence tag 取得装配空间的包围盒；叶子使用原型 tag；参考集不含实体导致无法取得 occurrence 时明确失败 |
+| 装配体测量 | [Component.FindOccurrence](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a37862.html) 及上述 UF_MODL 文档 | 所有非根目标使用 occurrence tag；根装配另计本身实体。不逐个 FindOccurrence 原型实体，避免强行创建参考集外实体的持久 occurrence；详见下方实例成员筛选 |
 | 视图和图片 | [View](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a81942.html)、[ImageExportBuilder](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a61974.html) | 保留有文档的 `Orient`、`SetRotationTranslationScale`、PNG/Transparent/EnhanceEdges；Builder 在 finally 销毁 |
 
 ## Teamcenter 只读弹窗：确定的代码行为与待实测原因
@@ -42,7 +42,7 @@
 
 **诊断推断**：这些写入/清理/关闭操作遇到只读或已修改的受管部件时，是弹窗的可疑触发点；未连接实际站点，不能断言它们就是每个弹窗的唯一原因。前一版删除这些操作，并在对话框释放后执行。本次根据大装配反馈重新引入有所有权边界的逐个卸载，详见下节。不会签出、保存、改变 Teamcenter ACL、修改发布状态或清除源部件修改标记。
 
-**当前保留的操作**：按需加载、装配实例显示/隐藏、视图旋转和坐标轴显示开关；仅测量还切换原型显示/工作上下文并使用临时坐标系。隔离截图已按用户反馈撤除。加载旧版本零件、站点自定义回调和显示切换本身仍可能产生提示或修改标记。官方还说明 `SetActiveDisplay` 可能重置撤销标记列表；恢复 display/work/view 不等于恢复 undo 历史。本地应先在独立测试会话验收。
+**当前保留的操作**：按需加载、装配实例显示/隐藏、视图旋转和坐标轴显示开关；测量使用原装配临时坐标系，已删除原型显示/工作切换。隔离截图已按用户反馈撤除。加载旧版本零件、站点自定义回调和显示切换本身仍可能产生提示或修改标记。官方还说明 `SetActiveDisplay` 可能重置撤销标记列表；恢复 display/work/view 不等于恢复 undo 历史。本地应先在独立测试会话验收。
 
 若仍弹窗，用 `Traversal.log` 最后一条 `[Load geometry]` / `[Context]` / `[BoundingBox]` / `[Orient]` / `[Restore view]` 定位阶段，记录 NX 错误号、弹窗完整文字、2512 maintenance build、该对象是否已发布/被他人签出、当前 work/display 状态及 NX syslog。不要直接加猜测的 suppress API 或强行签出来掩盖问题。
 
@@ -53,7 +53,7 @@
 | 接口/行为 | 官方 2512 依据 | 本次处理 |
 |---|---|---|
 | 加载只读文件也可能改变内存 | [UF_PART_open](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_part/global.html#UF_PART_open) 明确：读取过程中修改了只读部件，会返回非零 `UF_PART_err_read_only_modified`；这不是执行 Save 的证明 | `641058` 单独记录为警告，随后检查实际加载状态；其他代码仍失败，不忽略混合状态中的其他错误 |
-| 部分与完整加载 | [BasePart](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38266.html)：`LoadThisPartPartially()` 把最小加载提升到至少部分加载，不加载子件；`PartLoadState` 返回实际状态，`IsFullyLoaded` 验证完整加载 | 截图按当前实例递归准备未隐藏/未抑制后代的部分加载显示数据，不调用 `CollectBodyTags`；精确测量仍调用完整加载并验证。没有承诺 NX 内部不会自行升级加载 |
+| 部分与完整加载 | [BasePart](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38266.html)：`LoadThisPartPartially()` 把最小加载提升到至少部分加载，不加载子件；`PartLoadState` 返回实际状态，`IsFullyLoaded` 验证完整加载 | 两种导出共用当前实例未隐藏/未抑制后代的部分加载；删除 CollectBodyTags/LoadFully。精确查询可能隐式读取几何，不能据此保证其内部不会升级加载；无可用精确实体时明确失败 |
 | 等显示操作完成 | [DisplayManager.MakeUpToDate](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a53102.html) | 加载显示数据后完成待处理显示操作再截图；图像完整性仍需实机验收 |
 | 枚举与保护会话 | [PartCollection](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a70134.html)：`ToArray()` 返回 BasePart[]；`GetDisplayedParts()` 返回全部显示部件；`BaseWork` 返回工作部件 | 建立初始状态基线；保护所有显示窗口、work 及 [Component.Parent/OwningPart](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a37862.html) 工作路径；活动递归祖先引用计数保护 |
 | 逐个关闭临时部件 | [BasePart.Close/CloseModified](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38266.html)：wholeTree=false 只卸载指定部件；CloseModified 允许关闭已修改部件；responses 仅在 UseResponses 时使用 | 明确 False + CloseModified + null，仅作用于临时部件及本次触碰/提升的初始干净部分加载部件；不保存，舍弃其本次内存变化。禁止整树/CloseAll；关闭后验证不再出现在 Parts 集合 |
@@ -71,7 +71,7 @@
 
 | 当前接口 | 官方 2512 依据及实现边界 |
 |---|---|
-| [DisplayManager.BlankObjects/UnblankObjects](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a53102.html) | 隐藏/显示给定 DisplayableObject 数组；面/边不属于有效输入，会被忽略。只对目标路径外的兄弟实例及当前装配中目标以外的可见对象操作，不调用原型激活、隔离或布局 API；批调用前记录原状态，应对部分应用后抛错 |
+| [DisplayManager.BlankObjects/UnblankObjects](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a53102.html) | 隐藏/显示给定 DisplayableObject 数组；面/边不属于有效输入，会被忽略。对目标路径外的兄弟实例、目标外可见对象和截图范围内的辅助对象操作，不调用原型激活、隔离或布局 API；批调用前记录原状态，应对部分应用后抛错 |
 | [DisplayableObject.IsBlanked](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a53098.html)、[Component.Parent/GetChildren](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a37862.html) | 沿当前显示装配中的实例路径隐藏其他分支，必要时显示目标/祖先，保留隐藏后代；读取并复核 blank 状态，恢复时不使用 ShowAll。没有文档承诺此操作不产生修改标记或站点提示 |
 | [View.AskVisibleObjects/Fit/FitToObjects](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a81942.html) | AskVisibleObjects 不包括隐藏/不可见层和 X/Y 裁剪范围外的对象，不能单独枚举它后就认为“隐藏了所有其他对象”。因此每个方向先 Fit、刷新，再隐藏可见的非目标对象；最后 FitToObjects(target)、刷新并复核。空目标/仍有其他对象时失败。Component 实现 IFitTo |
 | [NXObject.OwningComponent](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a69838.html) | 返回 occurrence 的所属组件，沿 Parent 判断目标后代。按实例 tag 判断，不按原型相等判断，避免把同一原型其他实例也纳入图片。非 occurrence 对象仅允许当前显示装配所有的对象，否则拒绝修改 |
@@ -80,11 +80,29 @@
 | [View.WcsVisibility/TriadVisibility](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a81942.html)、[WCS.CoordinateSystem](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a82066.html) | 截图使用视图级开关临时隐藏坐标轴，并恢复原值；不读写 WCS 来决定图片方向。WCS 是独立的工作坐标系对象，不能因结构从 Teamcenter 打开就假定与 ACS 一致 |
 | [ImageExportBuilder](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a61974.html) | RegionMode=false、Png、Transparent、EnhanceEdges、Commit/finally Destroy；普通图形区域尺寸，无固定 1600×1200。本实现要求原装配 work=display 且只有一个活动建模视口，不创建新窗口 |
 
-新增 `NxAssemblyImageContext` 仅管理原装配显示状态，和已删除的隔离 `NxImageContext` 不同。结束时尝试恢复所有状态类别；任何恢复错误停止并保留当前加载集合。仅在全部恢复并核验原 work/display/work component/活动视口后才由资源管理器卸载。显示操作可能隐式加载；每批记录 LoadedParts，仍需本地确认内存峰值和恢复显示的成本。
+`NxAssemblyExportContext` 由已验收的 NxAssemblyImageContext 扩展并更名；两种导出共用一次原装配显示范围和状态恢复。结束时尝试恢复所有状态类别；任何恢复错误停止并保留当前加载集合。仅在全部恢复并核验原 work/display/work component/活动视口后才由资源管理器卸载。显示操作可能隐式加载；每批记录 LoadedParts，仍需本地确认内存峰值和恢复显示的成本。
 
-图片内容采用首次匹配实例的参考集及隐藏状态，方向按原型 ACS；并非保证与“单独打开完整原型”显示完全相同。不改参考集、图层、源 WCS、不 Save/Checkout/清 IsModified。精确测量仍按原型 ACS/WCS，在自己的原型上下文运行。旧 `useIsolatedImageView=true` 仍被拒绝，无图像失败后的原型激活回退。
+图片内容采用首次匹配实例的参考集及隐藏状态，方向按原型 ACS；并非保证与“单独打开完整原型”显示完全相同。不改参考集、图层、源 WCS、不 Save/Checkout/清 IsModified。精确测量按目标自身 ACS/WCS 的方向，在原装配上下文查询当前显示范围的实体。旧 `useIsolatedImageView=true` 仍被拒绝，无图像失败后的原型激活回退。
 
-**验证边界**：用户先前日志只确认一次提示发生于 SetActiveDisplay 内，未定位其内部原因。当前仅截图避开该调用，但 Blank/Unblank、部分加载、视图变化仍有原生副作用，不能由文档存在或离线替身测试推出无弹窗结论。原生显示状态是否完全恢复、层/参考集效果、窗口数、图片标记和内存峰值均待本地验收。
+**验证边界**：用户先前日志只确认一次提示发生于 SetActiveDisplay 内，未定位其内部原因。当前截图和 XYZ 都避开该调用，但 Blank/Unblank、部分加载、视图变化仍有原生副作用，不能由文档存在或离线替身测试推出无弹窗结论。原生显示状态是否完全恢复、层/参考集效果、窗口数、图片标记和内存峰值均待本地验收。
+
+## 本次新增：辅助对象隐藏与原装配精确测量
+
+用户已确认 `5478c9e` 的截图路线符合预期，要求补齐辅助对象隐藏，并让 XYZ 同样留在原装配。范围确认：隐藏零件不计入尺寸。以下为本次实现依据，不能代替本地 SDK 编译与实机验收。
+
+| 接口/行为 | 官方 2512 依据与实现 |
+|---|---|
+| 截图辅助对象 | 上述 DisplayManager / DisplayableObject / View：可见面和边归并为 Body；保留 Body 和 [Facet.FacetedBody](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a54710.html)，其余坐标系、点、草图曲线、基准/注释等临时 Blank。逐对象记录原始状态，异常也恢复；不采用难以恢复原状态的 HideByType/ShowAll。目标无模型对象时失败，不能把辅助几何误当成成功截图 |
+| 实例成员与子组件 | [UFAssem.CycleObjsInComp](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a77634.html)、[原生契约](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_assem/global.html#UF_ASSEM_cycle_objs_in_comp)、[官方遍历示例](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_assem/uf_assem_eg3.c)：枚举组件的 occurrence 成员，以 Tag.Null 开始/结束；示例另行遍历子组件，不能假定成员循环自动覆盖所有后代。本实现亦单独递归 GetChildren，并过滤隐藏/抑制状态。需实测参考集排除子件、部分加载和轻量化状态下成员覆盖情况 |
+| UF tag 转 NX 包装对象 | [NXObjectManager.Get](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a69870.html)：静态 Get(Tag) 返回 TaggedObject；只将当前存活 tag 转为 DisplayableObject，不持有已卸载对象用于后续目标 |
+| 层与范围 | [LayerManager.GetVisibilitiesInView](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a64154.html)：要求当前显示部件；返回 StateInfo[]，第 i 项对应层 i+1，仅 Visible/Hidden。[StateInfo](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a64142.html) 的 Layer/State 是字段。筛掉隐藏层、blank 对象及隐藏/抑制祖先，不修改层状态。测量不依赖相机可见集合，避免漏掉未隐藏但被遮挡的实体 |
+| 轻量化对象 | FacetedBody.IsAssociatedBodyLoaded / AssociatedBody 返回关联实体的加载状态/Body。只有存在原装配内对应实体时才转为精确查询；仅有小平面数据时测量失败，不静默漏算，不改为粗略盒或完整激活原型。截图仍可保留小平面模型 |
+| 原装配精确盒 | UF_MODL_ask_bounding_box_exact 明确支持 occurrence tag，会按实例变换到装配空间；CSYS 必须属于当前 work part。将目标 ACS/WCS 组合实例旋转后，在原装配 CreateMatrix/CreateTempCsys，直接按该方向查询几何，不旋转已有 ACS 包围盒。原型 WCS 只读；临时对象 finally 删除，删除失败停止 |
+| 单位与坐标 | UF_ASSEM_ask_component_data 说明 4×4 的旋转块和位移列，位移以装配单位表示。目标 WCS 原点先换为装配单位，再变换；结果从装配单位换为目标单位。混合毫米/英寸及任意角度/嵌套实例须本地手工精确盒对照，数学替身不能验证 NX 数据单位的原生返回行为 |
+
+`NxAssemblyExportContext` 不修改参考集、组件位置、源 WCS 或访问权限。截图与 XYZ 在同一范围中顺序执行；一次测量失败可继续截图，恢复或资源清理失败则停止。删除 NxPartContext 和显式完整加载函数，旧原型激活路径不再有调用入口。
+
+CSV 首五列兼容，范围列为 `DisplayedOccurrenceBodies`；同一原型不同实例仍只导出第一个匹配实例。不能把这次范围变化误写成“完整原型所有后代”。任一精确查询失败不写该目标尺寸行；日志包含实体数和每次精确查询 begin/end，供进一步定位站点提示。
 
 未采用的屏蔽候选：
 
@@ -116,7 +134,7 @@
 - 中文 WCS 选项原先落入 ACS 默认分支；现在显式映射，不接受未知值。
 - 原 WCS 算法旋转的是 ACS 外包围盒，不是实体，会高估；原 ACS 又错误依赖当前 WCS。已直接按目标坐标系查询并正确聚合方向向量。
 - 不再用坐标绝对值大于 1e6 的规则静默过滤实体；拒绝 NaN/Infinity/负尺寸；任一实体失败则不写不完整 CSV。
-- 多个实例共享同一个原型只导出一次；这里输出的是**原型及其后代**的尺寸，ACS/WCS 都属于该原型，不是顶层装配的实例坐标。匹配子装配后不再单独导出其子件，沿用原筛选语义。
+- 多个实例共享同一个原型只导出一次；这里输出的是**首次匹配实例当前显示范围**的尺寸，ACS/WCS 方向属于该目标原型，不是顶层装配的每实例坐标报表。匹配子装配后不再单独导出其子件，沿用原筛选语义。
 - 已按本次用户要求改为逐节点卸载临时部件，保护用户原有完整加载/已修改/活动部件及递归祖先；详见下节。默认遍历深度仍为 5，可通过 `maxDepth` 调整。单个匹配大装配及 NX 缓存仍可能造成较高峰值，需实测。
 - 当前取消为外部调用 `AssemblyTraverser.RequestStop()` 的协作式取消；仓库没有停止窗口，不承诺 ESC 可以终止阻塞的 NX API 调用。
 - 每次输出到新的子目录，CSV 首五列兼容原字段，新增单位/坐标系/范围/实体数；名称转义、小数点固定、中文 UTF-8 BOM、PNG 文件名防冲突。
@@ -124,4 +142,4 @@
 
 ## 验证边界
 
-本次已执行 DLX/XML/映射检查及 138 项独立 C# 断言。数学/文本/所有权策略之外，真实资源管理器、显示上下文、NxGeometry 部分加载选择及装配内截图代码与显式 NX 测试替身组合编译并验证控制流；替身不证明官方 API 签名或原生行为。还以官方 net472 框架引用完成同一测试程序的编译，未在 Framework 4.7.2 运行。未执行 NX SDK 全量编译、NX 原生 DLX 加载、PNG 渲染、Teamcenter 实机测试或本地签名；这些由 [本地 agent 交接](../LOCAL_AGENT_PROMPT.md) 列出。纯算法测试通过不等于 NX 2512 集成验收通过。
+本次已执行 DLX/XML/映射检查及 179 项独立 C# 断言。数学/文本/所有权策略之外，真实资源管理器、原装配共享上下文、NxGeometry 部分加载选择、装配内截图及实际 BoundingBoxExporter 代码与显式 NX 测试替身组合编译并验证控制流；替身不证明官方 API 签名或原生行为。还以官方 net472 框架引用完成同一测试程序的编译，未在 Framework 4.7.2 运行。未执行 NX SDK 全量编译、NX 原生 DLX 加载、PNG 渲染、Teamcenter 实机测试或本地签名；这些由 [本地 agent 交接](../LOCAL_AGENT_PROMPT.md) 列出。纯算法测试通过不等于 NX 2512 集成验收通过。

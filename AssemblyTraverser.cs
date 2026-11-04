@@ -45,8 +45,8 @@ public sealed class AssemblyTraverser
         Session session = Session.GetSession();
         Part rootPart = session.Parts.Work;
         if (rootPart == null) throw new InvalidOperationException("请先打开装配并设置工作部件。");
-        if (_config.flagImageOn && session.Parts.Display != rootPart)
-            throw new InvalidOperationException("装配内截图要求原装配同时为工作部件和显示部件，请先在 NX 中设置。");
+        if (session.Parts.Display != rootPart)
+            throw new InvalidOperationException("装配内导出要求原装配同时为工作部件和显示部件，请先在 NX 中设置。");
         Component root = rootPart.ComponentAssembly.RootComponent;
         if (root == null) throw new InvalidOperationException("当前工作部件没有装配结构。");
         string output = Path.Combine(_config.filePath, "NX_Traverser_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") +
@@ -57,8 +57,8 @@ public sealed class AssemblyTraverser
             RunLog.Write("输出目录: " + output);
             RunLog.Write("每个匹配原型导出一次；匹配装配后不再单独导出其后代。坐标系=" + _config.coordinateSelection);
             RunLog.Write("逐节点释放临时加载部件；保留原有完整加载/已修改/活动部件。原有干净部分加载部件被本次使用后可卸载。");
-            if (_config.flagImageOn) RunLog.Write("截图模式=原装配内仅显示目标；图片方向=目标自身 ACS；隐藏 WCS/三重轴；不创建隔离窗口、不激活原型。");
-            if (_config.flagXYZOn) RunLog.Write("精确测量仍需原型上下文，可能触发只读部件激活提示。");
+            if (_config.flagImageOn) RunLog.Write("截图模式=原装配内仅显示目标；图片方向=目标自身 ACS；隐藏 WCS/三重轴及辅助对象；不创建隔离窗口、不激活原型。");
+            if (_config.flagXYZOn) RunLog.Write("XYZ 模式=原装配内实体实例精确包围盒；只计当前显示范围；方向=目标自身 ACS/WCS；不激活原型。");
             try
             {
                 using (_resources = new NxPartResources(session))
@@ -87,7 +87,7 @@ public sealed class AssemblyTraverser
         try
         {
             if (comp.IsSuppressed) { ++_skipped; return; }
-            Part part = NxGeometry.EnsurePrototype(comp, assembly, false);
+            Part part = NxGeometry.EnsurePrototype(comp, assembly);
             _resources.Pin(part);
             pinnedPart = part.Tag;
             Component[] children = comp.GetChildren();
@@ -115,20 +115,20 @@ public sealed class AssemblyTraverser
                 bool wasModified = part.IsModified;
                 try
                 {
-                    foreach (ITransactionHandler handler in _handlers)
+                    using (var context = new NxAssemblyExportContext(session, comp))
                     {
-                        if (StopRequested) break;
-                        string stage = handler.GetType().Name + " " + id;
-                        try
+                        foreach (ITransactionHandler handler in _handlers)
                         {
-                            RunLog.Write("[Begin] " + stage);
-                            // Exact measurement still needs the prototype. Images
-                            // operate in the restored original assembly throughout.
-                            using (var context = handler.RequiresPrototypeContext ? new NxPartContext(session, part) : null)
-                                handler.Process(comp, session, output, id + "_" + name);
-                            ++_completed;
+                            if (StopRequested) break;
+                            string stage = handler.GetType().Name + " " + id;
+                            try
+                            {
+                                RunLog.Write("[Begin] " + stage);
+                                handler.Process(context, output, id + "_" + name);
+                                ++_completed;
+                            }
+                            catch (Exception ex) { ++_failed; RunLog.Error(stage, ex); }
                         }
-                        catch (Exception ex) { ++_failed; RunLog.Error(stage, ex); }
                     }
                 }
                 finally

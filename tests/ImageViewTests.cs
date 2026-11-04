@@ -19,7 +19,7 @@ internal static class ImageViewTests
         try { action(); } catch (T) { failed = true; }
         Check(failed, message);
     }
-    private static Session Setup(out Part root, out Component component)
+    internal static Session Setup(out Part root, out Component component)
     {
         AssemblyTraverser.Stopped = false;
         var session = new Session();
@@ -298,7 +298,8 @@ namespace NXOpen
     }
     public class DisplayableObject : NXObject
     {
-        public bool IsBlanked, OffscreenUntilFit;
+        public bool IsBlanked, OffscreenUntilFit, Occluded;
+        public int Layer = 1;
     }
     public sealed class Body : DisplayableObject { }
     public sealed class Face : DisplayableObject { public Body Body; public Body GetBody() { return Body; } }
@@ -328,7 +329,7 @@ namespace NXOpen
             var visible = new System.Collections.Generic.List<DisplayableObject>();
             foreach (DisplayableObject obj in Scene)
             {
-                if (obj.IsBlanked || (obj.OffscreenUntilFit && !Fitted)) continue;
+                if (obj.IsBlanked || obj.Occluded || (obj.OffscreenUntilFit && !Fitted)) continue;
                 bool hidden = false;
                 for (Component c = obj as Component ?? obj.OwningComponent; c != null; c = c.Parent)
                     if (c.IsBlanked || c.IsSuppressed) { hidden = true; break; }
@@ -392,12 +393,26 @@ namespace NXOpen.UF
     {
         public static readonly UFSession Instance = new UFSession();
         public static UFSession GetUFSession() { return Instance; }
+        public readonly UFCsys Csys = new UFCsys();
+        public readonly UFModl Modl = new UFModl();
+        public readonly UFObj Obj = new UFObj();
         public readonly UFAssem Assem = new UFAssem();
     }
     public sealed class UFAssem
     {
         public Tag Explosion;
         public double[,] Transform;
+        public readonly System.Collections.Generic.Dictionary<Tag, NXObject[]> Members = new System.Collections.Generic.Dictionary<Tag, NXObject[]>();
+        public void CycleObjsInComp(Tag component, ref Tag member)
+        {
+            NXObject[] objects;
+            if (!Members.TryGetValue(component, out objects)) { member = Tag.Null; return; }
+            int next = 0;
+            if (member != Tag.Null)
+                for (int i = 0; i < objects.Length; ++i) if (objects[i].Tag == member) { next = i + 1; break; }
+            member = next < objects.Length ? objects[next].Tag : Tag.Null;
+            if (member != Tag.Null) Utilities.NXObjectManager.Objects[member] = objects[next];
+        }
         public void AskViewExplosion(Tag view, out Tag explosion) { explosion = Explosion; }
         public void AskTransformOfOcc(Tag occurrence, double[,] result)
         {

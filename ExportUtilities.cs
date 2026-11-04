@@ -50,6 +50,43 @@ public static class ExportUtilities
         return result;
     }
 
+    // Convert a prototype ACS/WCS into a temporary CSYS in the original work
+    // assembly. UF matrix rows are the local X/Y/Z axes in absolute space.
+    public static void FrameInAssembly(double[] localOrigin, double[] localAxes,
+        double[,] occurrence, out double[] origin, out double[] axes)
+    {
+        if (localOrigin == null || localOrigin.Length != 3 || localAxes == null || localAxes.Length != 9)
+            throw new ArgumentException("无效的测量坐标系。");
+        var identity = new double[,] { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
+        double[,] inverse = PrototypeViewInAssembly(identity, occurrence);
+        var localFrame = new double[4, 4];
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 3; ++c) localFrame[r, c] = localAxes[c * 3 + r];
+        double[,] localInverse = PrototypeViewInAssembly(identity, localFrame);
+        origin = new double[3]; axes = new double[9];
+        for (int r = 0; r < 3; ++r)
+        {
+            origin[r] = occurrence[r, 3];
+            for (int k = 0; k < 3; ++k) origin[r] += occurrence[r, k] * localOrigin[k];
+            if (double.IsNaN(origin[r]) || double.IsInfinity(origin[r]))
+                throw new ArgumentException("测量坐标系原点包含无效值。");
+            for (int axis = 0; axis < 3; ++axis)
+                for (int k = 0; k < 3; ++k) axes[axis * 3 + r] += inverse[k, r] * localInverse[axis, k];
+        }
+    }
+
+    public static double UnitScale(string assemblyUnits, string targetUnits)
+    {
+        return MillimetersPerUnit(assemblyUnits) / MillimetersPerUnit(targetUnits);
+    }
+
+    private static double MillimetersPerUnit(string units)
+    {
+        if (units == "Millimeters") return 1;
+        if (units == "Inches") return 25.4;
+        throw new ArgumentException("未知部件单位: " + units);
+    }
+
     public static string NormalizeCoordinateMode(string value)
     {
         string mode = (value ?? "ACS").Trim();

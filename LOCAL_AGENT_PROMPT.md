@@ -1,6 +1,6 @@
 # 本地 agent：NX 2512 编译、验收与部署提示词
 
-更新时间：2026-11-04。目标分支：`fix/nx2512-teamcenter-readonly`；修改基线：`2470a54`。这是本仓库的持续交接文档，后续每次代码、DLX 或构建配置变更都必须同步维护。
+更新时间：2026-11-04。目标分支：`fix/nx2512-teamcenter-readonly`；修改基线：`5478c9e`。这是本仓库的持续交接文档，后续每次代码、DLX 或构建配置变更都必须同步维护。
 
 ## 任务与边界
 
@@ -18,32 +18,30 @@
 4. 在含 `NX_Traverser.csproj` 的解压目录中执行下方构建命令。构建脚本不调用 Git，也不自动下载依赖；NX 引用、MSBuild 和相应 Targeting Pack 需由本机提供。
 5. 如需额外开发包，通过可联网浏览器取得安装包/官方引用包后按公司允许的方式传入本地，不假设本地 agent 能执行在线安装或 NuGet 还原。
 
-## 本次更新：在原装配内仅显示目标，图片按目标自身 ACS
+## 本次更新：辅助对象隐藏，XYZ 与截图共用原装配上下文
 
-接续 `bfd0c82`。用户提出不隔离、不单独激活部件，只在原装配临时隐藏其他组件、显示目标、调整角度截图、恢复显示状态，然后卸载本次加载的数据。用户进一步指定：不能假定 WCS 与 ACS 重合；图片方向按零件或子装配自身 ACS。Teamcenter 结构配置不能作为二者重合的判断依据。
-
-**此版在代码路径上避开了仅截图时的 SetActiveDisplay，尚未证明整个站点环境无弹窗。** 显示/隐藏、显示数据加载和站点回调仍须实测。精确包围盒测量仍使用原型上下文，组合运行的测量阶段仍可能提示；请先只开启截图验收。
+接续 `5478c9e`。用户已确认原装配内截图符合预期；本次保留该路线，补齐参考坐标系、点、草图、基准和其他辅助对象的临时隐藏。用户明确要求：隐藏的零件不参与 XYZ，尺寸范围与截图显示的实体对应。被前方零件遮挡、但没有被隐藏的实体仍须计入，不能按当前相机是否看得到来漏算。
 
 本次改动：
 
-- 新增 `NxAssemblyImageContext.cs`：在原显示装配的现有单建模视口中，临时隐藏目标路径以外的兄弟分支，显示目标及其祖先路径；记录每个实际更改对象的原始 blank 状态。没有 CreateIsolateView、布局切换、打开新窗口或截图失败后激活原型的回退。
-- `NxGeometry.PrepareDisplay` 改为按目标实例的实际子树请求部分加载；跳过原本隐藏或抑制的后代，不为隐藏兄弟分支打开原型。日志中的 OpenComponents 是后台加载显示数据，不是激活显示窗口。NX 仍可能在 Unblank/显示刷新时隐式加载；`Image visibility` 行记录每批显示更改后的 LoadedParts，节点 finally 会回收本次临时加载的部件。
-- 仅隐藏兄弟组件并不足以去除上级装配自带的实体/曲线/辅助对象。每个视角先 Fit 后查询 AskVisibleObjects，避免只检查旧画面而遗漏屏幕外对象；随后在原装配中临时隐藏目标以外的可见对象，再 FitToObjects(target) 并复核。面/边归并到所属实体；不能确认归属、仍有其他对象或没有可见目标时记录失败，不输出看似成功的图片。不修改源原型的 blank 状态，不更换参考集或图层。
-- `ExportUtilities.PrototypeViewInAssembly` 计算相机旋转 `C × R逆`：C 为 NX 的标准视角，R 为目标实例相对当前装配的放置旋转。只改变当前视图，不移动组件、不修改 WCS。根装配本身匹配时使用单位变换。镜像、剪切、非均匀缩放明确拒绝；嵌套和正常旋转必须用本地图片比对验证矩阵约定。
-- 保留八个方向、自动适配、透明 PNG、边缘增强、隐藏 WCS/三重轴；使用普通 ImageExportBuilder，像素尺寸取决于图形区域。图片采用首次匹配实例当前参考集和隐藏状态，方向按其原型 ACS；它的内容可能不同于脱离装配后显示整个原型。
-- 成功、导出失败、加载失败、协作式取消时恢复改过的 blank 状态以及原相机、WCS/三重轴开关；复核 work/display/work component/活动视口没有变化，再允许节点卸载。恢复失败仍尝试其他恢复项，随后停止并保留当前加载集合。
-- `AssemblyTraverser` 按事务区分上下文：仅测量使用 NxPartContext；测量恢复原装配后才截图。截图要求原装配同时为工作/显示部件、普通单建模视口且非爆炸视图，不满足时拒绝，不自动切换。`useIsolatedImageView` 仍默认 false，旧 true 配置明确拒绝。
+- `NxAssemblyImageContext.cs` 重构并更名为 `NxAssemblyExportContext.cs`。同一个匹配目标只建立一次原装配显示范围，XYZ 与截图共用目标实例、部分加载、原装配视图、实例变换和显示状态恢复；恢复后仍由现有资源管理器逐节点释放临时部件。
+- 截图每个方向 Fit/刷新后，只保留目标范围内的 Body/FacetedBody；面/边归并到 Body。坐标系、点、草图/曲线、基准、注释等其他可见对象临时 Blank，记录原始状态并在成功/异常/取消后恢复，不用 ShowAll。保留隐藏 WCS/三重轴、八个视角、目标自身 ACS、透明 PNG 和边缘增强。
+- XYZ 删除 `NxPartContext.cs` 及完整加载/原型激活路径。不调用 SetActiveDisplay、SetWork 或 LoadThisPartFully，也没有此类失败回退。`NxGeometry` 保留后台 OpenComponents、部分加载和加载状态检查；641058 只记警告，其他错误保持失败。
+- 测量使用 UFAssem.CycleObjsInComp 枚举实例成员，并按官方示例单独递归子组件；筛选 blank/抑制状态及当前视图隐藏层。使用实际实例成员，不通过逐个 FindOccurrence 把参考集外原型实体强行加入。不把 AskVisibleObjects 的当前相机结果作为测量清单。根目标另包含原装配自有 Body/FacetedBody。
+- ACS/WCS 都在原装配中创建本次临时 CSYS：方向由目标自身坐标系与实例放置变换组合；WCS 只读，绝不改源 WCS。对 occurrence tag 直接调用 AskBoundingBoxExact，按坐标方向聚合，输出转换为目标部件的毫米/英寸单位。CSV 首五列不变，范围列改为 `DisplayedOccurrenceBodies`。
+- 只有轻量化/小平面显示数据、没有可用关联实体，或任一精确查询失败时，此目标测量报错且不写不完整尺寸；仍允许截图事务继续。不会改用粗略尺寸或激活原型。临时 CSYS/矩阵清理失败则停止，并保留加载集合供核查。
+- 两种导出现在都要求原装配 work=display、普通单建模视口、非爆炸视图；不满足时明确拒绝。相同原型仍只处理第一个匹配实例，因此不同实例使用不同参考集/隐藏状态时，以第一个实例为准。
 
 ### 本地本次优先验收
 
-1. 使用本次完整 ZIP 源码重新编译。包含新增 `NxAssemblyImageContext.cs` 和已有 `NxViewState.cs`；前版已删除的 `NxImageContext.cs` 不应重新加入。合并本地改动前备份，记录下载提交号及最终 DLL/DLX SHA256。
-2. 在独立测试会话的普通单建模视口中，原装配同时为 work/display，先仅截图一个已知会在激活时弹窗的部件。应看到 `Hide other branches / Show target path（有实际改动时） → Prepare target display → Image context → Image overlays → Prepare assembly image frame → Capture assembly view → Restore visibility（有改动时） → Image context restored → Unload`。
-3. **仅截图日志不得出现 SetActiveDisplay、LoadThisPartFully、CreateIsolateView、ChangeLayout**。如出现，先确认运行的是新 DLL 且未勾选测量。不得新增窗口；检查图片没有绿色边框/编号、没有兄弟组件或上级自带几何混入。画面原来在屏幕外的其他实体也要覆盖。
-4. 方向验收：单件先看八个方向；再使用已旋转 90° 和嵌套放置的零件/子装配，与该原型自身 ACS 的标准视图对照。同一原型放置到不同方向，图片应保持同样的自身方向。改变顶层 WCS 后图片方向应不变。不要用“坐标轴看起来一致”代替模型方向比对。
-5. 显示恢复验收：目标/祖先原来隐藏、兄弟原来隐藏、目标后代部分隐藏、非默认参考集、同一原型多个实例、上级自带实体；正常/导出失败/取消后必须恢复原始状态。空参考集或完全不可见的目标应报错，不能把空图计为成功。测量范围仍可能与图片当前参考集范围不同。
-6. 验证 WCS/三重轴原来开/关的四种组合，以及原视图矩阵/平移/比例恢复。连续两轮、再扩大树规模，记录 LoadedParts/PrivateMB 峰值与结束值。特别比较 Restore visibility 前后的 LoadedParts：若恢复显示触发大量额外加载，保留这段日志，不能仅以末尾已卸载认定峰值可接受。
-7. 保留原有完整加载/已修改/活动部件及递归祖先；任务临时部件在显示状态恢复后逐节点卸载。对含螺栓后代的装配继续验证 3615013 复核规则；真实恢复或释放失败应停止。
-8. 仅截图通过后再分别测量、组合运行。仍有只读提示时记录最后一个 begin 未 end 的调用、完整文字和脱敏 syslog；不能通过保存、签出、清修改标记或自动确认所有弹窗规避。本次不宣称 NX/Teamcenter 无弹窗验收通过。
+1. 用本次完整 ZIP 在新目录编译，保留本地改动。新文件是 `NxAssemblyExportContext.cs`；删除旧目录中的 `NxAssemblyImageContext.cs`、`NxPartContext.cs`，以及更早废弃的 `NxImageContext.cs`，避免 `*.cs` 通配编译混入旧代码。`NxViewState.cs` 继续保留。测试文件无需加到 NX 插件工程中。
+2. 先复核新增 API 的本机签名：CycleObjsInComp、NXObjectManager.Get、LayerManager.GetVisibilitiesInView、Part.FacetedBodies、FacetedBody.IsAssociatedBodyLoaded/AssociatedBody、AskBoundingBoxExact、CreateTempCsys。云端没有 NX SDK，不能把替身编译当作此检查已通过。
+3. 截图回归：目标及子件放置参考 CSYS、点、草图曲线、基准轴/面和注释；混合原来可见与已隐藏状态。每张图中只保留模型实体；正常、导出失败、取消后逐一核对原始可见性、相机及 WCS/三重轴四种开关组合。不增加窗口，不出现绿色边框/编号。
+4. 单独 XYZ、单独截图、两项组合各跑一遍已知只读目标。组合日志应只有一次 `Export context`，随后 `Measurement scope / AskBoundingBoxExact occurrence` 和截图调用，最终 `Export context restored` 后才卸载。三种运行都不得出现 SetActiveDisplay、LoadThisPartFully、CreateIsolateView、ChangeLayout。OpenComponents 仅是后台加载，不是新窗口。
+5. 尺寸验收：先用尺寸已知的长方体，再用旋转 90°、任意角度和嵌套放置子装配；按目标自身 ACS/WCS 与 NX 手工精确包围盒比较。改变顶层 WCS 不应改变目标 ACS 结果；改变目标 WCS 应改变 WCS 测量方向。增加毫米/英寸混合部件用例，核对数值与 CSV 单位。
+6. **显示范围必须实测**：隐藏一个会扩大外形的子件、隐藏一个 Body、抑制子件、非默认参考集排除实体/子组件、空参考集、不可见图层、根装配自有实体、重复原型不同实例。隐藏/参考集外对象不计入；未隐藏但被其他实体挡住的后侧对象仍计入。尤其核对 CycleObjsInComp 在本站点部分加载/参考集条件下返回的实例成员和实体数，不能仅凭独立测试判定准确。
+7. 精确几何不足时必须明确测量失败，不得输出偏小的成功行；同一目标截图仍应运行。若常见模型落入此分支，回传具体日志及当时加载模式，不能恢复激活原型的旧路线。若仍弹窗，记录最后一个 begin 未 end 的调用、完整文字和脱敏 syslog；精确查询/显示加载可能在 NX 内部读取更多数据，源码不激活原型并不保证所有站点回调无提示。
+8. 连续两轮并扩大树规模，核对原始显示状态、LoadedParts/PrivateMB 峰值及结束值；保留原有完整加载/已修改/活动部件，临时部件在状态恢复后逐节点卸载。恢复/清理失败应停止。记录 DLL/DLX 签名后 SHA256、实际 NX maintenance build 与编译目标。
 
 ## 累计改动
 
@@ -52,11 +50,11 @@
 | `ClassLibrary1.dlx`、`.gitignore` | XML 声明前空行修复，XML 格式化，移除个人绝对路径，改 OK/Cancel，DLX 纳入跟踪；保留全部 9 个控件。`NX="1946"` 保留真实生成器来源，需 2512 Styler 验证另存，不能仅把数字改成 2512 |
 | `UIscripts.cs` | 已弃用 Show 改 Launch；检查 Ok 返回值；只在本次 OK 成功后保存配置；Dispose 对话框后运行；Apply 只验证，Cancel 不执行；释放 PropertyList；按 DLL 所在目录优先寻找配套 DLX |
 | `TraversalConfig.cs`、`ExportUtilities.cs` | 输入验证、空白过滤、中文 ACS/WCS 映射；`maxDepth` 默认 5；CSV 引号转义/固定小数点；安全且防冲突的 Windows 文件名；旧隔离配置仅保留 false 兼容；新增目标自身 ACS 的实例旋转补偿 |
-| `AssemblyTraverser.cs`、`NxGeometry.cs` | 新建每次运行目录；按需加载并检查/释放状态；检查 OpenComponentStatus；跳过抑制项；相同原型只处理一次；匹配装配后不单独导出后代；按稳定部件路径去重；截图后代不再强制完整加载；仅测量激活原型，截图留在原装配；节点 finally 清理临时部件；事务独立捕获错误；防止重入 |
+| `AssemblyTraverser.cs`、`NxGeometry.cs` | 新建每次运行目录；按需加载并检查/释放状态；检查 OpenComponentStatus；跳过抑制项；相同原型只处理一次；匹配装配后不单独导出后代；按稳定部件路径去重；两种导出均不强制完整加载；截图与测量共用原装配上下文；节点 finally 清理临时部件；事务独立捕获错误；防止重入 |
 | `NxPartResources.cs`、`PartLifetime.cs` | 运行前基线、活动祖先保护、逐节点卸载及释放失败停止；关闭后重查会话，避免失效包装对象；保护原有完整加载/已修改/显示/工作部件，允许卸载本次使用的原有干净部分加载部件；记录 LoadedParts/PrivateMB；独立所有权策略可回归 |
-| `NxPartContext.cs` | 显示切换前先完整预加载当前目标原型，检查状态后再激活；恢复原显示部件不增加显式预加载。`641058` 仅记警告，仍验证实际加载状态；其他状态（含 `641070`）保持失败。使用 SetActiveDisplay 建立目标原型上下文；恢复原显示部件及精确工作组件，PreserveRefset；恢复失败停止遍历并保留当前加载集合。官方说明显示切换可能重置 undo 标记，不能承诺恢复撤销历史 |
-| `ImageExporter.cs`、`NxAssemblyImageContext.cs`、`NxViewState.cs` | 原装配内仅显示目标截图，无隔离窗口/原型激活；恢复实际更改过的显示状态、相机和坐标轴开关，失败停止并保留部件。Builder 始终销毁，不清理源几何 |
-| `BoundingBoxExporter.cs`、`BoundingBoxMath.cs` | 官方确认 Tag.Null 表示当前 WCS，不是 ACS。ACS 使用临时单位 CSYS；WCS 直接查询该方向的精确盒；按 UF 方向向量聚合八角点；装配后代使用 occurrence tag；临时对象 finally 清理；失败时不写偏小的尺寸 |
+| `NxPartContext.cs`（已删除） | 原型激活/恢复路径移除；加载状态检查迁入 NxGeometry |
+| `ImageExporter.cs`、`NxAssemblyExportContext.cs`、`NxViewState.cs` | 共用原装配显示范围；截图临时隐藏辅助对象，恢复 blank/相机/坐标轴；恢复失败停止并保留部件 |
+| `BoundingBoxExporter.cs`、`BoundingBoxMath.cs` | 原装配 occurrence 精确测量，目标 ACS/WCS 临时坐标系和单位换算；范围与显示实体对应；临时对象 finally 清理，失败不写不完整 CSV |
 | `RunLog.cs` | 新增成对的 NX 调用 begin/end、编号、完成状态和耗时；`Traversal.log` 同步 Listing Window，含阶段、只读/修改状态、NX 错误码；检测加载后新增修改标记；不清除修改标记 |
 | `NX_Traverser.csproj`、`scripts/build.ps1` | 默认 net48 / x64，新增显式 v4.7.2 兼容编译参数；使用当前安装的 NXBIN/managed；Siemens 引用 Copy Local=false；嵌入本机 NXSigningResource.res；输出按框架隔离的 DLL/DLX、构建日志和 SHA256 |
 | `tests/` | 独立 C# 核心回归和 XML/控件一致性验证；PartResourceTests 和 ImageViewTests 使用明确的测试替身验证资源管理器、显示上下文和截图恢复控制流；不是 NX SDK，不验证 Siemens ABI/API、真实 PNG 或弹窗 |
@@ -144,7 +142,7 @@ dotnet run --project .\tests\CoreTests.csproj -c Release
 - 长条实体轴线与旋转 WCS 对齐：WCS 结果应回到长条真实长宽，不能输出旋转 ACS 外盒的高估值。
 - 多实体、偏离原点超过 1e6 的部件：不能静默漏体；CSV 的单位明确区分英寸/毫米。
 - 子装配中放置同一原型两次、带旋转/平移/嵌套和抑制组件：匹配子装配时尺寸包含有效后代的实际放置；单独匹配重复零件时每原型一份输出。
-- 部分/最小加载组件应自动加载；无法加载、缺少权限、参考集未包含实体时记录原因，不写误导性的部分包围盒。检查异常后后续组件仍能处理。
+- 部分/最小加载组件应自动加载；无法加载、缺少权限、当前显示范围没有实体时记录原因，不写误导性的部分包围盒。检查异常后后续组件仍能处理。
 - 八个视角 PNG 方向正确、透明背景和中文路径有效；截图隐藏 WCS/三重轴；执行结束恢复它们各自原始开关以及视图矩阵、平移、比例。
 - 测量结果 CSV 名称包含逗号/双引号/换行时可正确读回；在小数逗号地区仍使用小数点；每次运行独立目录，保留前次结果。
 
@@ -153,17 +151,17 @@ dotnet run --project .\tests\CoreTests.csproj -c Release
 - 分别用可写未发布、已发布只读、他人签出、无写权限但可读的样例，测试：仅测量、仅截图、两者同时开启。
 - 每组记录是否出现“该部件是只读的”，以及出现时日志最后的阶段、完整文字、NX 错误号和 syslog；同时比较运行前后 IsModified、显示/工作组件、参考集、WCS 和视图。
 - 确认无保存/签出/修改 ACL/清除修改标记。逐项核查下面的卸载保护规则；原有干净部分/最小加载部件允许被卸载，其树节点应仍存在且可再加载，不是删除组件。
-- 当前 display 与 work 不同时，截图/组合运行应在遍历前拒绝；仅测量仍必须恢复同一个 work occurrence，而不只是同一 Part。
+- 当前 display 与 work 不同时，所有导出均在遍历前拒绝；过程中不得改变原 work occurrence。
 - 输出目录不可写、CSV 被 Excel 占用、图片导出失败、加载失败时：异常有日志、Builder/CSV/加载状态释放、源部件上下文恢复。资源恢复失败应停止后续处理。
-- 若仍有只读提示，先依据阶段隔离测试显示切换、加载、Orient 和临时 CSYS。站点回调或旧部件转换可能是剩余原因，不能宣称通过“代码不调用 Save”就完全排除弹窗。
+- 若仍有只读提示，先依据日志区分加载、精确查询、Orient 和临时 CSYS。站点回调或旧部件转换可能是剩余原因，不能宣称通过“代码不调用 Save”就完全排除弹窗。
 
 ## 当前已验证及未验证
 
-- 云端 **138 项独立 C# 断言通过**：数学/文本、所有权和清理、显示上下文、真实 NxGeometry 的部分加载选择、装配内显示状态恢复、构造/导出/恢复失败、取消、无输出文件、空画面，以及目标自身 ACS 的数学与截图调用补偿检查。
+- 云端 **179 项独立 C# 断言通过**：数学/文本、所有权和清理、原装配上下文、实际 BoundingBoxExporter 的实例筛选/ACS/WCS/单位换算/失败清理、辅助对象隐藏与恢复、真实 NxGeometry 的部分加载选择、装配内显示状态恢复、构造/导出/恢复失败、取消、无输出文件、空画面，以及目标自身 ACS 的数学与截图调用补偿检查。
 - 测试使用 .NET 8.0.427 SDK 的 Roslyn 编译并执行；NX 相关代码与显式测试替身组合，生成的是假文件，不验证 Siemens API 签名、真实 PNG、窗口或弹窗。
-- `python tests/validate_dlx.py`、`git diff --check` 通过；16 个插件源文件及 3 个测试源文件通过 C# 7.3 语法解析，这不包含 NX SDK 类型检查。
+- `python tests/validate_dlx.py`、`git diff --check` 通过；15 个插件源文件及 4 个测试源文件通过 C# 7.3 语法解析，这不包含 NX SDK 类型检查。
 - 同一测试程序使用 Microsoft 官方 net472 1.0.3 引用程序集编译通过；未在 Framework 4.7.2 运行，也未编译完整 NX 插件。此前已核对默认 v4.8、显式 v4.7.2 及独立输出目录，本次没有改构建目标。
-- 官方 API 依据见 `docs/NX2512_API_REVIEW.md`。**待本地**：完整插件的 NX SDK 编译、签名、DLX 加载、目标 ACS 图片方向、参考集范围、显示状态恢复、连续运行窗口数、显示恢复时隐式加载与内存峰值，以及 Teamcenter 提示。截图已移除激活原型路径，但无弹窗效果尚未实测。
+- 官方 API 依据见 `docs/NX2512_API_REVIEW.md`。**待本地**：完整插件的 NX SDK 编译、签名、DLX 加载、目标 ACS 图片方向、参考集范围、显示状态恢复、连续运行窗口数、显示恢复时隐式加载与内存峰值，以及 Teamcenter 提示。截图与 XYZ 均已移除原型激活路径；本次新增隐藏辅助对象和原装配 XYZ 的实机效果仍待验收。
 
 ## 回传并持续维护
 
