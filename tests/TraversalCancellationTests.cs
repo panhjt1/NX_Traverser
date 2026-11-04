@@ -108,6 +108,9 @@ internal static class TraversalCancellationTests
         UFSession.Instance.Modl.Fail = false;
         UFSession.Instance.Modl.AfterQuery = null;
         UFSession.Instance.Obj.Fail = false;
+        UFSession.Instance.Obj.Deleted.Clear();
+        UFSession.Instance.Obj.States.Clear();
+        UFSession.Instance.Obj.States[(Tag)9002] = UFConstants.UF_OBJ_CONDEMNED;
         UFSession.Instance.Assem.Members.Clear();
         UFSession.Instance.Assem.Members[first.Tag] = new NXObject[] { root.Views.WorkView.Scene[0] };
         UFSession.Instance.Modl.Vertices[(Tag)3000] = new[] { new double[]{0,0,0}, new double[]{2,3,4} };
@@ -152,19 +155,21 @@ internal static class TraversalCancellationTests
             string logOutput = session.ListingWindow.Lines.Find(x => x.Contains("输出目录: "));
             string directory = logOutput.Substring(logOutput.IndexOf("输出目录: ", StringComparison.Ordinal) + "输出目录: ".Length);
             Check(!File.Exists(Path.Combine(directory, "BoundingBoxResult.csv")), "No dimension row after canceled exact query");
-            Check(UFSession.Instance.Obj.Deleted.Count >= 2, "Canceled exact query cleans temporary CSYS/matrix");
+            Check(UFSession.Instance.Obj.Deleted.Count == 1 && UFSession.Instance.Obj.Deleted[0] == (Tag)9003,
+                "Canceled exact query cleans only the owned CSYS");
 
             session = Setup(out root, out first, out second);
             firstPart = (Part)first.Prototype;
-            UFSession.Instance.Obj.Cascade = true;
             images = 0;
             session.CaptureObserver = view => ++images;
-            var cascadeConfig = Config(output, true);
-            cascadeConfig.idPatterns = new[] { "first" };
-            try { AssemblyTraverser.Run(cascadeConfig); }
-            finally { UFSession.Instance.Obj.Cascade = false; }
+            var cleanupConfig = Config(output, true);
+            cleanupConfig.idPatterns = new[] { "first" };
+            AssemblyTraverser.Run(cleanupConfig);
             Check(images == 2 && firstPart.Closed && !AssemblyTraverser.StopRequested,
-                "Matrix cascade cleanup allows following image transaction and per-node unload");
+                "Condemned orientation support does not prevent following image transaction and per-node unload");
+            Check(UFSession.Instance.Obj.Deleted.Count==1 && UFSession.Instance.Obj.Deleted[0]==(Tag)9003 &&
+                UFSession.Instance.Obj.States[(Tag)9002]==UFConstants.UF_OBJ_CONDEMNED,
+                "Full traversal leaves the NX-managed matrix alone");
             Check(session.ListingWindow.Lines.Exists(x => x.Contains("成功事务=2") && x.Contains("失败=0") && x.Contains("停止=False")),
                 "Verified cleanup is counted as a successful measurement, not a retained-parts stop");
 

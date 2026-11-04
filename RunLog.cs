@@ -6,7 +6,7 @@ using NXOpen;
 
 internal sealed class RunLog : IDisposable
 {
-    internal const string DiagnosticRevision = "nx2512-measure-cleanup-20261104";
+    internal const string DiagnosticRevision = "nx2512-measure-csys-owner-20261104";
     private static RunLog _current;
     private static int _callId;
     private readonly StreamWriter _writer;

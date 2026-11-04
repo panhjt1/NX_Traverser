@@ -199,6 +199,8 @@ namespace NXOpen
     }
     public sealed class Part : BasePart
     {
+        public Part() { CoordinateSystems = new CoordinateSystemCollection(this); }
+        public readonly CoordinateSystemCollection CoordinateSystems;
         public enum Units { Millimeters, Inches }
         public Units PartUnits = Units.Millimeters;
         public readonly WCS WCS = new WCS();

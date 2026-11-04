@@ -38,9 +38,9 @@ internal static class BoundingBoxExportTests
         var uf = UFSession.Instance;
         uf.Assem.Members.Clear(); uf.Modl.Vertices.Clear(); uf.Modl.Queried.Clear();
         uf.Modl.Fail = false; uf.Modl.AfterQuery = null; uf.Obj.Deleted.Clear(); uf.Obj.Fail = false;
-        uf.Obj.States.Clear(); uf.Obj.Cascade = false; uf.Obj.Refuse = Tag.Null;
+        uf.Obj.States.Clear(); uf.Obj.StatusQueries.Clear(); uf.Obj.Refuse = Tag.Null;
+        uf.Obj.States[(Tag)9002] = UFConstants.UF_OBJ_CONDEMNED; // Existing, NX-managed orientation support.
         uf.Obj.ErrorTag = Tag.Null; uf.Obj.DeleteBeforeError = false; uf.Obj.StatusError = false;
-        uf.Csys.FailCreateTemp = false;
         uf.Csys.Origin = new double[3]; uf.Csys.Axes = new double[] { 1,0,0,0,1,0,0,0,1 };
         uf.Csys.SourceOrigin = new double[3]; uf.Csys.SourceAxes = (double[])uf.Csys.Axes.Clone();
         uf.Assem.Members[component.Tag] = new NXObject[] { root.Views.WorkView.Scene[0] };
@@ -113,12 +113,18 @@ internal static class BoundingBoxExportTests
         Check(hiddenBody.IsBlanked && hiddenChild.IsBlanked, "Hidden descendants stay hidden");
         Check(session.Calls.TrueForAll(c=>c.StartsWith("partial ", StringComparison.Ordinal)), "No activation or full loading in either handler");
         Check(session.Parts.Work==root && session.Parts.Display==root, "Original work and display preserved");
-        Check(uf.Obj.Deleted.Count==2, "Temporary matrix and CSYS both deleted");
+        Check(root.CoordinateSystems.LastTemporary && root.CoordinateSystems.Created.Count==1,
+            "Query frame is created as a non-displayed/non-filed temporary in the original work assembly");
+        Check(uf.Obj.Deleted.Count==1 && uf.Obj.Deleted[0]==root.CoordinateSystems.Created[0].Tag,
+            "Only the new measurement CSYS is deleted; source WCS, auxiliaries and matrix are untouched");
+        uf.Obj.Deleted.Clear();
 
         session.CaptureObserver = view => { throw new IOException("capture fails"); };
         try { TransactionTestScope.Run(new ImageExporter(new[]{ImageExporter.SnapViewType.Top}), comp,session,output,"failed"); }
         catch(IOException) { }
         for(int i=0;i<auxiliaries.Length;++i) Check(auxiliaries[i].IsBlanked==(i==5), "Capture failure restores auxiliaries");
+        Check(uf.Obj.Deleted.Count==0 && root.CoordinateSystems.Created.Count==1,
+            "Standalone screenshot failure neither creates measurement objects nor deletes auxiliary objects");
     }
 
     private static void CoordinateQueries(string output)
@@ -162,8 +168,9 @@ internal static class BoundingBoxExportTests
         uf.Modl.Fail=true;
         Fails(()=>Export(comp,session,output,"ACS"),"Exact query failure propagates");
         Check(!File.Exists(Path.Combine(output,"BoundingBoxResult.csv")),"No incomplete CSV row on failed query");
-        Check(uf.Obj.Deleted.Count==2 && session.Parts.Display==root && !root.ComponentAssembly.RootComponent.Children[1].IsBlanked,
-            "Query failure cleans temporary objects and restores visibility");
+        Check(uf.Obj.Deleted.Count==1 && uf.Obj.Deleted[0]==root.CoordinateSystems.Created[0].Tag &&
+            session.Parts.Display==root && !root.ComponentAssembly.RootComponent.Children[1].IsBlanked,
+            "Query failure cleans only its own CSYS and restores visibility");
         using(var context=new TransactionTestScope(session,comp,output,"target"))
         {
             Fails(()=>context.Process(new BoundingBoxExporter("ACS")),"Shared context survives failed measurement");
@@ -224,8 +231,8 @@ internal static class BoundingBoxExportTests
         Check(text.Contains("[Exception detail]") && text.Contains("inner query detail") &&
             !session.ListingWindow.Lines.Exists(x => x.Contains("inner query detail")),
             "Full inner exception is on disk without flooding the information window");
-        Check(text.Contains("Delete measurement temporary CSYS tag=9003") && text.Contains("Delete measurement temporary matrix tag=9002") &&
-            text.Contains("Completed=False"), "Failed query and both cleanup calls leave paired evidence");
+        Check(text.Contains("Release self-owned measurement CSYS tag=9003") && !text.Contains("temporary matrix") &&
+            text.Contains("Completed=False"), "Failed query and only the owned-CSYS cleanup leave paired evidence");
         Check(!File.Exists(Path.Combine(output, "BoundingBoxResult.csv")), "Diagnostic changes cannot emit an incomplete dimension row");
         UFSession.Instance.Modl.AfterQuery = null;
     }
@@ -234,13 +241,22 @@ internal static class BoundingBoxExportTests
     {
         Part root; Component comp;
         var uf = UFSession.Instance;
-        Session session = Setup(out root, out comp);
-        uf.Obj.Cascade = true;
-        Export(comp, session, output, "ACS");
-        Check(uf.Obj.Deleted.Count == 1 && uf.Obj.AskStatus((Tag)9002) == UFConstants.UF_OBJ_DELETED,
-            "CSYS cascade removal does not attempt a second delete on its dead matrix tag");
-        Check(Row(output).Contains(",2.000,3.000,4.000,") && !AssemblyTraverser.StopRequested,
-            "Cascade cleanup permits a complete dimension row and continued traversal");
+        Session session;
+        foreach (int matrixState in new[] { UFConstants.UF_OBJ_CONDEMNED, UFConstants.UF_OBJ_ALIVE,
+            UFConstants.UF_OBJ_TEMPORARY, UFConstants.UF_OBJ_DELETED })
+        {
+            session = Setup(out root, out comp);
+            uf.Obj.States[(Tag)9002] = matrixState;
+            // Several queries share an NX-managed orientation; no query owns it.
+            for (int run=0; run<3; ++run) Export(comp, session, output, "ACS");
+            Check(uf.Obj.Deleted.Count == 3 && !uf.Obj.Deleted.Contains((Tag)9002) &&
+                !uf.Obj.StatusQueries.Contains((Tag)9002) && uf.Obj.States[(Tag)9002] == matrixState,
+                "Shared/NX-managed matrix status never authorizes a query to touch or delete it");
+            Check(Row(output).Contains(",2.000,3.000,4.000,") && !AssemblyTraverser.StopRequested,
+                "Including native Condemned matrix state, only the private CSYS controls cleanup success");
+            Check(root.CoordinateSystems.Created.TrueForAll(c => uf.Obj.States[c.Tag] == UFConstants.UF_OBJ_DELETED),
+                "Repeated measurements release each private coordinate system");
+        }
 
         // The same stale-parameter code is acceptable only with independent
         // proof of deletion; a live object must still stop the run.
@@ -248,30 +264,34 @@ internal static class BoundingBoxExportTests
         {
             session = Setup(out root, out comp);
             File.Delete(Path.Combine(output, "BoundingBoxResult.csv"));
-            uf.Obj.ErrorTag = (Tag)9002; uf.Obj.DeleteBeforeError = deleted;
+            uf.Obj.ErrorTag = (Tag)9003; uf.Obj.DeleteBeforeError = deleted;
             if (deleted) Export(comp, session, output, "ACS");
-            else Fails(() => Export(comp, session, output, "ACS"), "1105004 with live matrix remains a cleanup failure");
+            else Fails(() => Export(comp, session, output, "ACS"), "1105004 with live private CSYS remains a cleanup failure");
             Check(File.Exists(Path.Combine(output, "BoundingBoxResult.csv")) == deleted && AssemblyTraverser.StopRequested != deleted,
                 "Status, not error code alone, decides cleanup success");
         }
 
-        foreach (Tag refused in new[] { (Tag)9003, (Tag)9002 })
-        {
-            session = Setup(out root, out comp);
-            File.Delete(Path.Combine(output, "BoundingBoxResult.csv"));
-            uf.Obj.Refuse = refused;
-            Fails(() => Export(comp, session, output, "ACS"), "A successful return without actual deletion is rejected");
-            Check(AssemblyTraverser.StopRequested && !File.Exists(Path.Combine(output, "BoundingBoxResult.csv")),
-                "Unreleased temporary cannot produce a success row");
-            if (refused == (Tag)9003)
-                Check(!uf.Obj.Deleted.Contains((Tag)9002), "Do not delete a matrix still referenced by an uncleared CSYS");
-        }
+        session = Setup(out root, out comp);
+        File.Delete(Path.Combine(output, "BoundingBoxResult.csv"));
+        uf.Obj.Refuse = (Tag)9003;
+        Fails(() => Export(comp, session, output, "ACS"), "A successful return without actual deletion is rejected");
+        Check(AssemblyTraverser.StopRequested && !File.Exists(Path.Combine(output, "BoundingBoxResult.csv")),
+            "Unreleased private CSYS cannot produce a success row");
+        Check(!uf.Obj.Deleted.Contains((Tag)9002), "Failed CSYS cleanup does not authorize deleting its matrix");
 
         session = Setup(out root, out comp);
-        uf.Csys.FailCreateTemp = true;
+        root.CoordinateSystems.FailCreate = true;
         Fails(() => Export(comp, session, output, "ACS"), "CSYS creation failure propagates");
-        Check(uf.Obj.Deleted.Count == 1 && uf.Obj.Deleted[0] == (Tag)9002 && !AssemblyTraverser.StopRequested,
-            "Failure before CSYS creation releases the standalone matrix");
+        Check(uf.Obj.Deleted.Count == 0 && !AssemblyTraverser.StopRequested &&
+            uf.Obj.States[(Tag)9002] == UFConstants.UF_OBJ_CONDEMNED,
+            "Creation failure returns no owned CSYS and never deletes an existing matrix");
+
+        session = Setup(out root, out comp);
+        root.CoordinateSystems.AfterCreate = AssemblyTraverser.RequestStop;
+        bool canceled = false;
+        try { Export(comp, session, output, "ACS"); } catch (OperationCanceledException) { canceled = true; }
+        Check(canceled && uf.Obj.Deleted.Count==1 && uf.Obj.Deleted[0]==root.CoordinateSystems.Created[0].Tag,
+            "Cancellation at creation return still releases the just-created private CSYS");
 
         session = Setup(out root, out comp);
         uf.Obj.StatusError = true;
@@ -283,6 +303,29 @@ internal static class BoundingBoxExportTests
 
 namespace NXOpen
 {
+    public sealed class CoordinateSystemCollection
+    {
+        private readonly Part _part;
+        private int _nextTag = 9003;
+        public CoordinateSystemCollection(Part part) { _part = part; }
+        public readonly List<CartesianCoordinateSystem> Created = new List<CartesianCoordinateSystem>();
+        public bool LastTemporary, FailCreate;
+        public Action AfterCreate;
+        public CartesianCoordinateSystem CreateCoordinateSystem(Point3d origin, Matrix3x3 orientation, bool isTemporary)
+        {
+            if (FailCreate) throw new InvalidOperationException("CSYS creation failed");
+            var uf = UFSession.Instance;
+            uf.Csys.Origin = new[] { origin.X, origin.Y, origin.Z };
+            uf.Csys.Axes = new[] { orientation.Xx, orientation.Xy, orientation.Xz,
+                orientation.Yx, orientation.Yy, orientation.Yz, orientation.Zx, orientation.Zy, orientation.Zz };
+            LastTemporary = isTemporary;
+            var csys = new CartesianCoordinateSystem { Tag=(Tag)_nextTag++, OwningPart=_part };
+            Created.Add(csys);
+            uf.Obj.States[csys.Tag] = UFConstants.UF_OBJ_ALIVE; // Same CSYS state as the user's native log.
+            if (AfterCreate != null) AfterCreate();
+            return csys;
+        }
+    }
     public class CartesianCoordinateSystem : DisplayableObject { }
     public class Point : DisplayableObject { }
     public class Sketch : DisplayableObject { }
@@ -321,16 +364,8 @@ namespace NXOpen.UF
     public class UFCsys
     {
         public double[] Origin,Axes,SourceOrigin,SourceAxes;
-        public bool FailCreateTemp;
         public void AskCsysInfo(Tag tag,out Tag matrix,double[] origin) { matrix=(Tag)9001;SourceOrigin.CopyTo(origin,0); }
         public void AskMatrixValues(Tag tag,double[] axes) { SourceAxes.CopyTo(axes,0); }
-        public void CreateMatrix(double[] axes,out Tag matrix)
-        { Axes=(double[])axes.Clone();matrix=(Tag)9002;UFSession.Instance.Obj.States[matrix]=UFConstants.UF_OBJ_ALIVE; }
-        public void CreateTempCsys(double[] origin,Tag matrix,out Tag csys)
-        {
-            csys=Tag.Null;if(FailCreateTemp)throw new InvalidOperationException("CSYS creation failed");
-            Origin=(double[])origin.Clone();csys=(Tag)9003;UFSession.Instance.Obj.States[csys]=UFConstants.UF_OBJ_TEMPORARY;
-        }
     }
     public class UFModl
     {
@@ -363,10 +398,12 @@ namespace NXOpen.UF
     {
         public readonly List<Tag> Deleted=new List<Tag>();public bool Fail;
         public readonly Dictionary<Tag,int> States=new Dictionary<Tag,int>();
-        public bool Cascade, DeleteBeforeError, StatusError;
+        public readonly List<Tag> StatusQueries=new List<Tag>();
+        public bool DeleteBeforeError, StatusError;
         public Tag Refuse, ErrorTag;
         public int AskStatus(Tag tag)
         {
+            StatusQueries.Add(tag);
             if(StatusError)throw new InvalidOperationException("Status query failed");
             int state;return States.TryGetValue(tag,out state)?state:UFConstants.UF_OBJ_DELETED;
         }
@@ -378,7 +415,6 @@ namespace NXOpen.UF
             if(tag==Refuse)return;
             if(tag!=ErrorTag||DeleteBeforeError)States[tag]=UFConstants.UF_OBJ_DELETED;
             if(tag==ErrorTag)throw new NXException(1105004);
-            if(Cascade&&tag==(Tag)9003)States[(Tag)9002]=UFConstants.UF_OBJ_DELETED;
         }
     }
     public static class UFConstants

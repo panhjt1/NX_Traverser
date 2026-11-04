@@ -289,7 +289,11 @@ internal static class ImageViewTests
 namespace NXOpen
 {
     public struct Matrix3x3 { public double Xx, Xy, Xz, Yx, Yy, Yz, Zx, Zy, Zz; }
-    public struct Point3d { public double X, Y, Z; }
+    public struct Point3d
+    {
+        public double X, Y, Z;
+        public Point3d(double x, double y, double z) { X=x; Y=y; Z=z; }
+    }
     public interface IFitTo { }
     public class NXObject
     {

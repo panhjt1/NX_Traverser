@@ -1,19 +1,24 @@
 # NX 2512 官方 API 核对与审查记录
 
-核对日期：2026-11-04。本次基线：`14501c9`。NX API 核对以 **Siemens 官方 2512 文档**为依据，不把旧版社区示例视为新版本 API；用户运行证据和 Microsoft 构建资料另行注明。官方文档浏览器页面动态加载，本文链接到同一文档的正文或参考类。
+核对日期：2026-11-04。本次基线：`707ecea`。NX API 核对以 **Siemens 官方 2512 文档**为依据，不把旧版社区示例视为新版本 API；用户运行证据和 Microsoft 构建资料另行注明。官方文档浏览器页面动态加载，本文链接到同一文档的正文或参考类。
 
-## 本次：临时测量对象删除的状态契约
+## 本次：矩阵所有权与辅助对象只隐藏
 
-用户补全日志显示 55 个精确查询完成，失败来自临时对象删除 `NXError=1105004`，随后程序按保护策略停止。这不是已证实的 AskBoundingBoxExact 崩溃。旧代码无条件先删 CSYS、再删其矩阵，没有验证 tag 是否仍存活；旧日志不区分删除角色，尚不能证明本次具体是哪个 tag 失效。
+用户 12:01 的原生日志表明：查询完成，临时 CSYS `176788` 已由 Alive(3) 变为 Deleted(0)，矩阵 `63938` 仍为 Condemned(2)。上一版 `707ecea` 将其视作插件必须清理的独占对象而停止，这个所有权假设不成立。日志本身没有证明该矩阵的引用者、是否被复用或何时物理回收，不能根据 tag 大小或 Condemned 就删除它。
 
-- [UF_OBJ_delete_object](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_obj/global.html#UF_OBJ_delete_object) 明确：成功返回也不保证对象已删除，应使用 UF_OBJ_ask_status 确认。
-- [UFObj.AskStatus(Tag)](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a80066.html) 的 .NET 签名在官方类页核对为返回 int；[原生契约](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_obj/global.html#UF_OBJ_ask_status) 返回四种状态，并提示避免操作失效对象；NX 可删除或复用它们。
-- [uf_obj_types.h](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_obj/uf_obj_types.html) 定义 `UF_OBJ_DELETED=0`、`UF_OBJ_TEMPORARY=1`、`UF_OBJ_CONDEMNED=2`、`UF_OBJ_ALIVE=3`。实现使用对应 UFConstants 名称，非猜测错误码或反射接口。
-- [CreateTempCsys](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_csys/global.html#UF_CSYS_create_temp_csys) 创建临时 CSYS 并接收关联矩阵。文档没有保证二者可以永远作为两个独立存活对象连续删除；也没有足够依据宣称在所有情况下删除 CSYS 必定删除矩阵。
+官方 2512 依据：
 
-修复在 NxGeometry 的公共测量服务内，按 CSYS→matrix 顺序先查状态再删除，删除后复核。已删除对象不再重复调用 DeleteObject；只对本次持有的 Alive/Temporary 对象尝试清理；CSYS 清理不确定时不继续删矩阵。1105004 只有在后续 AskStatus 明确返回 Deleted 时才接受，否则仍失败/停止/保留部件；不吞掉状态查询错误，不将 Condemned 当作删除完成。创建/查询失败与取消仍经 finally 清理。
+- [NXMatrix](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a69826.html) 是不可变 3×3 方向对象，可在多个创建/其他方法中复用。仅取得矩阵 tag 不能证明调用方独占它。
+- [CoordinateSystemCollection.CreateCoordinateSystem](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a51414.html) 有 `(Point3d origin, Matrix3x3 orientation, bool isTemporary)` 重载，返回新的 CartesianCoordinateSystem。true 的临时坐标系不显示、不存入部件文件；方向相对所属部件 ACS，必须正交归一。
+- 同一类页说明：部分 smart 坐标系因只支撑其他对象、不显示而处于 condemned 状态。因此这种状态不能笼统当作错误或“必须再删一次”。本次不把这一说明扩展成矩阵已被物理删除的保证。
+- [BasePart.CoordinateSystems](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38266.html) 是属于该部件的集合；使用当前原工作装配集合创建临时测量坐标系，满足 UF_MODL_ask_bounding_box_exact 对工作部件上下文的要求。
+- [UFObj.AskStatus/UF_OBJ_delete_object](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_obj/global.html#UF_OBJ_delete_object) 的删除后验证仍用于**本次自建的临时 CSYS**；状态常量来自 [uf_obj_types.h](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_obj/uf_obj_types.html)。不将所有 Condemned 状态全局视为删除完成。
 
-新增创建/删除角色、tag、前后状态、实体进度与 DLL/MVID 标识，完整异常链写文件。265 项离线断言包含连带删除与独立删除、实际未删除、创建失败及后续事务/卸载路径；net472 引用编译和语法检查通过。原生状态与新 API 的 SDK 编译仍由本地确认。单独截图报错目前缺少对应日志，不因修复测量清理就视为已解决。
+实现改用 Point3d/Matrix3x3 数值重载，移除显式 UF CreateMatrix/CreateTempCsys 及矩阵 tag 清理。只持有新临时 CSYS 的 tag，finally 中仅释放它；底层方向对象由 NX 管理，不在插件中枚举、查状态或删除。坐标系创建未返回时，没有额外“独立矩阵”需由插件处理。自建 CSYS 的真实清理失败仍停止；1105004 仅在确认该 CSYS 已 Deleted 时接受。
+
+用户要求已有参考坐标系、点、草图等只能隐藏。源码审查：NxAssemblyExportContext 仅用 BlankObjects/UnblankObjects 保存恢复 blank 状态；NxViewState 恢复视图/WCS/三重轴开关。唯一 DeleteObject 调用位于 NxGeometry.DeleteMeasurementCsys，其 tag 仅来自上述新建调用，既不来自可见对象枚举，也不来自源 WCS。构建标识为 `nx2512-measure-csys-owner-20261104`，日志清楚区分自建测量 CSYS 与辅助对象隐藏。
+
+277 项离线断言覆盖各种矩阵状态不影响清理、不删除辅助对象、自建 CSYS 的创建/失败/取消/释放和后续截图/卸载；net472 引用编译、语法和 DLX 检查通过。测试替身不能验证原生工厂内部状态/回收或是否触发站点回调，新重载需本地 SDK 编译及重复运行验收。测量方向和实体范围未改；单独截图报错仍缺对应日志。
 
 ## 版本、构建和部署
 
@@ -67,7 +72,7 @@
 | 按需加载/只读诊断 | [BasePart](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a38266.html)、[ComponentAssembly](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a37866.html) | `OpenComponents(ComponentOnly)`、`LoadThisPartPartially`；检查加载结果；使用 `IsReadOnly/IsModified` 记录状态 |
 | 包围盒坐标含义 | [UF_MODL_ask_bounding_box_exact](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_modl/global.html#UF_MODL_ask_bounding_box_exact)、[UFModl .NET](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a79234.html) | `Tag.Null` 表示当前 WCS；CSYS 必须位于当前 work part 上下文；八角点必须使用方向向量，不可直接 `min + distances` |
 | ACS/WCS | [UFCsys](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a77982.html)、[UF_CSYS](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_csys/global.html)、[WCS](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a82066.html) | 读取目标 ACS/WCS 方向，经实例放置旋转转换到原装配；WCS 原点换算单位后变换。均在原工作装配创建临时 CSYS，不把原型 WCS tag 直接传给装配查询 |
-| 临时对象清理 | [UF_OBJ_delete_object](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_obj/global.html#UF_OBJ_delete_object) | 只删除本次创建的临时 CSYS/矩阵，不修改、替换或删除源 WCS |
+| 临时对象清理 | [UF_OBJ_delete_object](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_obj/global.html#UF_OBJ_delete_object) | 只释放本次新建的临时 CSYS；不触碰方向矩阵或模型已有辅助对象，不修改、替换或删除源 WCS |
 | 装配体测量 | [Component.FindOccurrence](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a37862.html) 及上述 UF_MODL 文档 | 所有非根目标使用 occurrence tag；根装配另计本身实体。不逐个 FindOccurrence 原型实体，避免强行创建参考集外实体的持久 occurrence；详见下方实例成员筛选 |
 | 视图和图片 | [View](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a81942.html)、[ImageExportBuilder](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a61974.html) | 保留有文档的 `Orient`、`SetRotationTranslationScale`、PNG/Transparent/EnhanceEdges；Builder 在 finally 销毁 |
 
@@ -132,7 +137,7 @@
 | UF tag 转 NX 包装对象 | [NXObjectManager.Get](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a69870.html)：静态 Get(Tag) 返回 TaggedObject；只将当前存活 tag 转为 DisplayableObject，不持有已卸载对象用于后续目标 |
 | 层与范围 | [LayerManager.GetVisibilitiesInView](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a64154.html)：要求当前显示部件；返回 StateInfo[]，第 i 项对应层 i+1，仅 Visible/Hidden。[StateInfo](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a64142.html) 的 Layer/State 是字段。筛掉隐藏层、blank 对象及隐藏/抑制祖先，不修改层状态。测量不依赖相机可见集合，避免漏掉未隐藏但被遮挡的实体 |
 | 轻量化对象 | FacetedBody.IsAssociatedBodyLoaded / AssociatedBody 返回关联实体的加载状态/Body。只有存在原装配内对应实体时才转为精确查询；仅有小平面数据时测量失败，不静默漏算，不改为粗略盒或完整激活原型。截图仍可保留小平面模型 |
-| 原装配精确盒 | UF_MODL_ask_bounding_box_exact 明确支持 occurrence tag，会按实例变换到装配空间；CSYS 必须属于当前 work part。将目标 ACS/WCS 组合实例旋转后，在原装配 CreateMatrix/CreateTempCsys，直接按该方向查询几何，不旋转已有 ACS 包围盒。原型 WCS 只读；临时对象 finally 删除，删除失败停止 |
+| 原装配精确盒 | UF_MODL_ask_bounding_box_exact 明确支持 occurrence tag，会按实例变换到装配空间；CSYS 必须属于当前 work part。将目标 ACS/WCS 组合实例旋转后，在原装配用 CoordinateSystems.CreateCoordinateSystem(Point3d, Matrix3x3, true)，直接按该方向查询几何，不旋转已有 ACS 包围盒。原型 WCS 只读；临时对象 finally 删除，删除失败停止 |
 | 单位与坐标 | UF_ASSEM_ask_component_data 说明 4×4 的旋转块和位移列，位移以装配单位表示。目标 WCS 原点先换为装配单位，再变换；结果从装配单位换为目标单位。混合毫米/英寸及任意角度/嵌套实例须本地手工精确盒对照，数学替身不能验证 NX 数据单位的原生返回行为 |
 
 `NxAssemblyExportContext` 不修改参考集、组件位置、源 WCS 或访问权限。截图与 XYZ 在同一范围中顺序执行；一次测量失败可继续截图，恢复或资源清理失败则停止。删除 NxPartContext 和显式完整加载函数，旧原型激活路径不再有调用入口。
@@ -177,4 +182,4 @@ CSV 首五列兼容，范围列为 `DisplayedOccurrenceBodies`；同一原型不
 
 ## 验证边界
 
-本次已执行 DLX/XML/映射检查及 265 项独立 C# 断言。数学/文本/所有权策略之外，真实 AssemblyTraverser/TransactionContext/RunLog/取消监控、资源管理器、原装配共享上下文、NxGeometry 部分加载选择、装配内截图及实际 BoundingBoxExporter 代码与显式 NX 测试替身组合编译并验证控制流；替身不证明官方 API 签名或原生行为。还以官方 net472 框架引用完成同一测试程序的编译，未在 Framework 4.7.2 运行。未执行 NX SDK 全量编译、NX 原生 DLX 加载、PNG 渲染、Teamcenter 实机测试或本地签名；这些由 [本地 agent 交接](../LOCAL_AGENT_PROMPT.md) 列出。纯算法测试通过不等于 NX 2512 集成验收通过。
+本次已执行 DLX/XML/映射检查及 277 项独立 C# 断言。数学/文本/所有权策略之外，真实 AssemblyTraverser/TransactionContext/RunLog/取消监控、资源管理器、原装配共享上下文、NxGeometry 部分加载选择、装配内截图及实际 BoundingBoxExporter 代码与显式 NX 测试替身组合编译并验证控制流；替身不证明官方 API 签名或原生行为。还以官方 net472 框架引用完成同一测试程序的编译，未在 Framework 4.7.2 运行。未执行 NX SDK 全量编译、NX 原生 DLX 加载、PNG 渲染、Teamcenter 实机测试或本地签名；这些由 [本地 agent 交接](../LOCAL_AGENT_PROMPT.md) 列出。纯算法测试通过不等于 NX 2512 集成验收通过。

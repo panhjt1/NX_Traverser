@@ -1,6 +1,6 @@
 # 本地 agent：NX 2512 编译、验收与部署提示词
 
-更新时间：2026-11-04。目标分支：`fix/nx2512-teamcenter-readonly`；修改基线：`14501c9`。这是本仓库的持续交接文档，后续每次代码、DLX 或构建配置变更都必须同步维护。
+更新时间：2026-11-04。目标分支：`fix/nx2512-teamcenter-readonly`；修改基线：`707ecea`。这是本仓库的持续交接文档，后续每次代码、DLX 或构建配置变更都必须同步维护。
 
 ## 任务与边界
 
@@ -18,27 +18,29 @@
 4. 在含 `NX_Traverser.csproj` 的解压目录中执行下方构建命令。构建脚本不调用 Git，也不自动下载依赖；NX 引用、MSBuild 和相应 Targeting Pack 需由本机提供。
 5. 如需额外开发包，通过可联网浏览器取得安装包/官方引用包后按公司允许的方式传入本地，不假设本地 agent 能执行在线安装或 NuGet 还原。
 
-## 本次更新：测量完成后临时对象清理报 1105004
+## 本次更新：只拥有测量坐标系，不拥有其底层矩阵
 
-用户补齐的 10:42 日志显示：55 个实体的 AskBoundingBoxExact 查询已走完，随后删除临时 CSYS/矩阵报 `1105004`，导致结果尚未写 CSV 就停止并保留 3 个加载部件。最初信息窗口文本被截断，不能据此推断第 14 个实体卡住或插件原生崩溃。该日志仍是重构前格式；本次需要确认实际编译、加载的 DLL。
+用户 12:01 的实机日志已明确：55 个实体查询完成，本次临时坐标系 `176788` 从 Alive(3) 变为 Deleted(0)，随后矩阵 `63938` 是 Condemned(2)，上一版因此错误停止。问题是把方向矩阵当成插件独占、必须删除的资源。`Condemned` 不能证明本次临时坐标系未清理，也不能据此操作该矩阵。上一版的状态校验仍建立在错误的矩阵所有权假设上，已撤掉这条路径。
+
+用户再次明确：**已有参考坐标系、点、草图等辅助对象只能隐藏，不能删除。** 截图使用 BlankObjects/UnblankObjects 并恢复原状态，WCS/三重轴使用视图开关；截图代码没有 DeleteObject。本次继续保留这一边界。测量为了指定目标 ACS/WCS 方向需要自己的临时坐标系，它与用户模型中的辅助对象是两类不同对象。
 
 本次修改（保持主循环 + Process(TransactionContext)/Finish 架构）：
 
-- `NxGeometry` 不再无条件连续删除两个 tag。按 CSYS→matrix 顺序逐个 `UFObj.AskStatus`；已删除的对象跳过，Alive/Temporary 才尝试删除，并在删除后确认 `UF_OBJ_DELETED`。前一个对象删除可能使后一个失效，不能把缓存 tag 当作仍存活的对象。
-- 若删除抛 `1105004`，也必须再次查状态，只有确认已删除才接受；仍存在、状态查询失败、Condemned/未知状态或其他异常都保持停止和保留部件。坐标系删除未确认成功时，不再继续删仍可能被其引用的矩阵。CSYS 创建失败时仍清理已经独立创建的矩阵。
-- 创建/清理调用有成对日志，清理明确写 `CSYS/matrix`、tag 和前后状态。清理绕过取消检查；测量本身与清理同时失败时，两份异常均留在日志。没有忽略所有 1105004，没有修改精确测量算法或增加完整加载/激活回退。
-- `RunLog` 增加 `[Build] nx2512-measure-cleanup-20261104 MVID=...` 与 `[Assembly] DLL路径`，由主循环启动时记录；MVID 用于辨认实际二进制，不是 Git 提交号。`[BoundingBox ACS/WCS]` 增加实体序号/总数、所属组件、原型名称及加载状态；完整异常栈/内部异常只写 `Traversal.log`。
-- 本次无新增运行时文件、依赖或配置控件。新增的 NX 调用为官方 2512 `UFObj.AskStatus(Tag)`；对应 `UFConstants.UF_OBJ_*` 常量请用本机 SDK 编译核对，官方依据已记入 API 文档。
+- `NxGeometry` 改用原装配 `CoordinateSystems.CreateCoordinateSystem(Point3d, Matrix3x3, true)`，直接传原点与方向数值。官方说明 true 表示不显示、不存入部件文件的临时坐标系。坐标换算、AskBoundingBoxExact、显示实体范围及 CSV 格式不变。
+- 移除显式 `CreateMatrix/CreateTempCsys` 组合、矩阵 tag 的状态查询和删除。调用方仅拥有这次工厂返回的一个临时 CSYS；NX 的内部方向对象不作为调用方独占资源。源 WCS 只读，已有辅助对象不进入清理列表。
+- 唯一 DeleteObject 路径改名 `DeleteMeasurementCsys`，只接收上述创建调用返回的 tag。临时 CSYS 在成功/测量失败/取消时清理并核验 Deleted；它确实未清理或状态无法确认时仍停止和保留部件。CSYS 创建失败、未返回对象时不猜测或删除内部对象。
+- 创建日志为 `Create self-owned measurement CSYS` 和 `[Measurement frame] SelfCreatedCsys=... Temporary=True`，清理日志为 `Release self-owned measurement CSYS`，明确指本次测量对象。不会再有 `Delete measurement temporary matrix`。辅助对象隐藏仍记录 `Hide auxiliary and other geometry` / `Restore visibility`。
+- Build 标识更新为 `nx2512-measure-csys-owner-20261104`，继续记录实际 DLL 路径、MVID、实体序号和完整文件异常链。没有新增运行时文件、依赖或 UI 控件。
 
 本地优先执行：
 
-1. 新 ZIP 独立解压、保留本地改动后全量编译/签名；允许继续显式 v4.7.2。启动日志必须出现上述 Build 标识及“事务顺序”，核对 Assembly 路径。若不一致，先查加载了哪个 DLL，不能拿旧 DLL 的结果验证本次源码。
-2. 使用同一目标 SVHA-8103020A/003 先单跑 XYZ。完整文件日志应有清理前后状态：`0=Deleted, 1=Temporary, 2=Condemned, 3=Alive`。若矩阵已随坐标系被清理，应记录 `already deleted; skip`，不再盲删。必须有 Dimensions、CSV 完整尺寸行、显示恢复及逐节点 Unload，且不再因已经删除的矩阵停止。
-3. 若仍报错，反馈该目标从最后一次 AskBoundingBoxExact 到结尾的文件日志，尤其两个清理角色的 Before/After 和 Exception detail；不要只贴信息窗口开头。此版本没有将“矩阵必定连带删除”当作事实，需实机状态证据确认。
-4. 跑 XYZ+截图，确认正常测量后仍执行图片事务并恢复/卸载；测量时取消仍清理临时对象，不输出不完整尺寸、不继续后续目标。真实清理失败仍应停止并保留当前加载集合，不得为让统计通过而禁用保护。
-5. 用户另称只勾选截图也报错，但目前提供的仍是同一份 XYZ 日志，尚无独立截图错误证据。单独截图应只有 `事务顺序: ImageExporter`；单独保存那次 Traversal.log 的尾部及错误，不能把测量清理修复宣称为截图故障已解决。
+1. 新 ZIP 独立解压、保留本地修改，全量编译/签名，可继续显式 v4.7.2。用 NX 2512 SDK 核对新调用的 **Point3d + Matrix3x3 + bool** 重载，不能换回 NXMatrix 重载或补回矩阵删除。启动日志核对上述 Build 标识、Assembly 路径和“事务顺序”。
+2. 同一目标 SVHA-8103020A/003 单跑 XYZ：55 个查询后只清理本次 SelfCreatedCsys，之后必须有 Dimensions、完整 CSV、显示恢复及逐节点 Unload。不得再因为某个底层矩阵为 Condemned 停止；不要加“全局忽略状态 2”的补丁。
+3. 单独截图及 XYZ+截图都要核查：原有坐标系、点、草图、基准等对象截图时隐藏、结束后恢复原 blank 状态，源 WCS 不变；只跑截图不应创建/删除任何测量坐标系。截图普通失败与取消也检查恢复，不得用删除辅助对象解决画面残留。
+4. 测量成功、失败和取消均检查自建临时 CSYS 释放，后续事务/组件按原规则继续或停止。多目标/重复运行检查临时坐标系数及内存；不要将底层矩阵状态或 tag 大小当作拥有/删除它的依据。没有源部件 Save、Checkout、清修改标记或完整激活回退。
+5. 如仍失败，返回该次 `Traversal.log` 的 Build、Measurement frame、最后查询到完整结尾及 Exception detail。另一个“单独截图报错”仍没有独立错误日志，不能因为修复测量清理就宣称它已解决。
 
-云端本次验证：**265 项离线断言通过**；新增覆盖 CSYS 连带删除矩阵、独立删除、1105004 后对象仍在/确已删除、删除正常返回但对象未消失、状态无法读取、CSYS 创建失败、成功清理后继续截图和卸载，以及诊断信息在调用结束前已落盘。旧替身默认两个对象独立且删除必成功，不能验证原生生命周期，现已补这些失败场景。另完成 net472 引用编译、C# 7.3 语法和 DLX 检查；没有 NX SDK/Teamcenter 实机验证。
+云端本次验证：**277 项离线断言通过**；覆盖底层矩阵为 Condemned/Alive/Temporary/Deleted 均不触碰、多次测量逐个释放自建 CSYS、创建失败/刚创建时取消、CSYS 真正清理失败、继续截图及逐节点卸载，并断言截图成功/失败不删除用户辅助对象。旧测试默认矩阵属于插件，这是错误假设，现已删除相应“必须删除矩阵”断言。net472 引用编译、C# 7.3 语法和 DLX 检查通过；没有 NX SDK/Teamcenter 实机验证。
 
 ## 此前更新：保持主循环 + 标准化即插即用事务
 
@@ -48,7 +50,7 @@
 
 - 两个事务原有自行创建上下文的 `Process(Component, Session, ...)` 旁路，现已删除。唯一接口统一为 `Process(TransactionContext)`；事务不能构造/关闭公共上下文。`TransactionContext.cs` 是本次唯一新增的运行时源文件，提供目标信息、统一命名及可复用服务入口；另新增 `tests/TransactionContractTests.cs` 验证生命周期和扩展接入。
 - 主循环集中 `BuildTransactionHandlers` 默认注册、`ProcessTarget` 顺序派发和一次 `FinishHandlers` 收尾。新增 `Run(config, IEnumerable<ITransactionHandler>)` 显式注册入口，允许新事务不修改递归逻辑；构造参数由各事务验证，公共筛选/输出/深度由主循环配置。注册成功后启动检查失败也会调用每个 Finish，一项 Finish 抛错不影响后续回调。
-- 原 `NxAssemblyExportContext` 同时承担显示状态和测量枚举，现只负责显示范围/相机/辅助对象状态。实体枚举、精确盒查询、目标 ACS/WCS 变换、单位换算和临时 CSYS/矩阵清理集中到 `NxGeometry`。BoundingBoxExporter 只取得 `BoundingBoxResult` 并写 CSV；ImageExporter 只组织视角和 PNG 输出/Builder 清理。
+- 原 `NxAssemblyExportContext` 同时承担显示状态和测量枚举，现只负责显示范围/相机/辅助对象状态。实体枚举、精确盒查询、目标 ACS/WCS 变换、单位换算和自建临时 CSYS 清理集中到 `NxGeometry`。BoundingBoxExporter 只取得 `BoundingBoxResult` 并写 CSV；ImageExporter 只组织视角和 PNG 输出/Builder 清理。
 - 事务通过公共上下文按需准备显示服务。只读属性类事务不会被强制隐藏分支、加载整个目标显示子树或检查单建模视口；主循环仍按原规则获取目标原型及遍历所需的部分数据。
 - 新增每事务画面恢复边界：截图成功/异常/取消后，在执行下一事务前恢复相机、辅助对象与 WCS/三重轴；目标分支遮罩/加载仍共享到该目标事务全部结束，最后统一恢复、逐节点卸载。检查原 work/display/work component，扩展违反上下文要求时停止并保留部件，不能任由下一个事务继续。
 - `RunLog` 还原为纯日志记录；NX 调用前后及异常路径的取消检查移到 `TraversalCancellation.NxCall`，事务用 `context.NxCall/CheckCancellation/Log`。停止按钮和原有清理保护行为保留。
@@ -73,7 +75,7 @@
 - 新增 `TraversalCancellation.cs`：在加载、组件、成员、测量实体、视角和带日志的 NX 调用前后检查停止请求。使用官方 `UFSession.Abort.AskFlagStatus(out bool)` 读取未被 NX 消耗的取消信号，先锁存整轮停止再调用 ClearAbort 确认处理；不调用 DisableAbort/EnableAbort，不猜错误码或匹配本地化弹窗文字。
 - 官方明确指出：NX 若已经处理取消，AskFlagStatus 可能返回 false。因此不能承诺每次默认“工作进行中”取消都能被追回；**整轮停止以独立按钮为可靠入口**。它不强制终止正在阻塞的 NX 调用；当前调用返回后才退出后续工作。
 - `TraversalCancellation.NxCall` 在正常返回和异常路径检查取消（本次已从 RunLog 移出）；`AssemblyTraverser` 把取消记录为 `[CANCELED]` 并停止后续处理，普通加载/导出错误仍沿用继续下个目标的规则。取消不计为普通部件失败，不额外弹错误框。已输出文件保留；取消的测量不写不完整 CSV 行。
-- 恢复 blank/相机/坐标轴、删除临时 CSYS/矩阵、节点卸载不受停止检查阻断。取消监控接口本身失败时停止继续遍历；真实恢复/卸载失败仍报告错误并按原保护规则处理。
+- 恢复 blank/相机/坐标轴、释放自建临时 CSYS、节点卸载不受停止检查阻断。取消监控接口本身失败时停止继续遍历；真实恢复/卸载失败仍报告错误并按原保护规则处理。
 - 工程增加 Framework 自带的 `System.Windows.Forms`、`System.Drawing` 引用，不新增 NuGet 依赖。正常结束等待窗口线程退出再卸载插件；若窗口退出异常仍存活，`GetUnloadOption` 暂用 AtTermination，且不允许启动另一轮，避免旧线程访问已卸载插件或干扰新任务。
 
 ### 保留的停止功能验收
@@ -97,13 +99,13 @@
 - XYZ 删除 `NxPartContext.cs` 及完整加载/原型激活路径。不调用 SetActiveDisplay、SetWork 或 LoadThisPartFully，也没有此类失败回退。`NxGeometry` 保留后台 OpenComponents、部分加载和加载状态检查；641058 只记警告，其他错误保持失败。
 - 测量使用 UFAssem.CycleObjsInComp 枚举实例成员，并按官方示例单独递归子组件；筛选 blank/抑制状态及当前视图隐藏层。使用实际实例成员，不通过逐个 FindOccurrence 把参考集外原型实体强行加入。不把 AskVisibleObjects 的当前相机结果作为测量清单。根目标另包含原装配自有 Body/FacetedBody。
 - ACS/WCS 都在原装配中创建本次临时 CSYS：方向由目标自身坐标系与实例放置变换组合；WCS 只读，绝不改源 WCS。对 occurrence tag 直接调用 AskBoundingBoxExact，按坐标方向聚合，输出转换为目标部件的毫米/英寸单位。CSV 首五列不变，范围列改为 `DisplayedOccurrenceBodies`。
-- 只有轻量化/小平面显示数据、没有可用关联实体，或任一精确查询失败时，此目标测量报错且不写不完整尺寸；仍允许截图事务继续。不会改用粗略尺寸或激活原型。临时 CSYS/矩阵清理失败则停止，并保留加载集合供核查。
+- 只有轻量化/小平面显示数据、没有可用关联实体，或任一精确查询失败时，此目标测量报错且不写不完整尺寸；仍允许截图事务继续。不会改用粗略尺寸或激活原型。自建临时 CSYS 清理失败则停止，并保留加载集合供核查。
 - 两种导出现在都要求原装配 work=display、普通单建模视口、非爆炸视图；不满足时明确拒绝。相同原型仍只处理第一个匹配实例，因此不同实例使用不同参考集/隐藏状态时，以第一个实例为准。
 
 ### 保留的截图与 XYZ 验收
 
 1. 用本次完整 ZIP 在新目录编译，保留本地改动。新文件是 `NxAssemblyExportContext.cs`；删除旧目录中的 `NxAssemblyImageContext.cs`、`NxPartContext.cs`，以及更早废弃的 `NxImageContext.cs`，避免 `*.cs` 通配编译混入旧代码。`NxViewState.cs` 继续保留。测试文件无需加到 NX 插件工程中。
-2. 先复核新增 API 的本机签名：CycleObjsInComp、NXObjectManager.Get、LayerManager.GetVisibilitiesInView、Part.FacetedBodies、FacetedBody.IsAssociatedBodyLoaded/AssociatedBody、AskBoundingBoxExact、CreateTempCsys。云端没有 NX SDK，不能把替身编译当作此检查已通过。
+2. 先复核新增 API 的本机签名：CycleObjsInComp、NXObjectManager.Get、LayerManager.GetVisibilitiesInView、Part.FacetedBodies、FacetedBody.IsAssociatedBodyLoaded/AssociatedBody、AskBoundingBoxExact、CoordinateSystems.CreateCoordinateSystem(Point3d, Matrix3x3, bool)。云端没有 NX SDK，不能把替身编译当作此检查已通过。
 3. 截图回归：目标及子件放置参考 CSYS、点、草图曲线、基准轴/面和注释；混合原来可见与已隐藏状态。每张图中只保留模型实体；正常、导出失败、取消后逐一核对原始可见性、相机及 WCS/三重轴四种开关组合。不增加模型/隔离窗口，不出现绿色边框/编号。
 4. 单独 XYZ、单独截图、两项组合各跑一遍已知只读目标。组合日志应只有一次 `Export context`，随后 `Measurement scope / AskBoundingBoxExact occurrence` 和截图调用，最终 `Export context restored` 后才卸载。三种运行都不得出现 SetActiveDisplay、LoadThisPartFully、CreateIsolateView、ChangeLayout。OpenComponents 仅是后台加载，不是新窗口。
 5. 尺寸验收：先用尺寸已知的长方体，再用旋转 90°、任意角度和嵌套放置子装配；按目标自身 ACS/WCS 与 NX 手工精确包围盒比较。改变顶层 WCS 不应改变目标 ACS 结果；改变目标 WCS 应改变 WCS 测量方向。增加毫米/英寸混合部件用例，核对数值与 CSV 单位。
@@ -226,7 +228,7 @@ dotnet run --project .\tests\CoreTests.csproj -c Release
 
 ## 当前已验证及未验证
 
-- 云端 **265 项独立 C# 断言通过**：新增自定义事务注册/顺序、共享上下文、元数据事务不准备视图、每事务画面恢复、Finish 生命周期、上下文违规停止、参数验证及重复视角去重；新增真实 AssemblyTraverser/TransactionContext/RunLog/取消监控的整轮中断、取消后恢复卸载、正常错误继续、后续模块/视角/组件跳过和新一轮重置；另外保留数学/文本、所有权和清理、原装配上下文、实际 BoundingBoxExporter 的实例筛选/ACS/WCS/单位换算/失败清理、辅助对象隐藏与恢复、真实 NxGeometry 的部分加载选择、装配内显示状态恢复、构造/导出/恢复失败、取消、无输出文件、空画面，以及目标自身 ACS 的数学与截图调用补偿检查。
+- 云端 **277 项独立 C# 断言通过**：新增自定义事务注册/顺序、共享上下文、元数据事务不准备视图、每事务画面恢复、Finish 生命周期、上下文违规停止、参数验证及重复视角去重；新增真实 AssemblyTraverser/TransactionContext/RunLog/取消监控的整轮中断、取消后恢复卸载、正常错误继续、后续模块/视角/组件跳过和新一轮重置；另外保留数学/文本、所有权和清理、原装配上下文、实际 BoundingBoxExporter 的实例筛选/ACS/WCS/单位换算/失败清理、辅助对象隐藏与恢复、真实 NxGeometry 的部分加载选择、装配内显示状态恢复、构造/导出/恢复失败、取消、无输出文件、空画面，以及目标自身 ACS 的数学与截图调用补偿检查。
 - 测试使用 .NET 8.0.427 SDK 的 Roslyn 编译并执行；NX 相关代码与显式测试替身组合，生成的是假文件，不验证 Siemens API 签名、真实 PNG、窗口或弹窗。
 - `python tests/validate_dlx.py`、`git diff --check` 通过；18 个插件源文件及 6 个测试源文件通过 C# 7.3 语法解析，这不包含 NX SDK 类型检查。
 - 同一测试程序使用 Microsoft 官方 net472 1.0.3 引用程序集编译通过；真实停止窗口源码也用这些引用及 System.Windows.Forms/System.Drawing 单独编译通过，未在 Linux 运行 Windows UI；未在 Framework 4.7.2 运行，也未编译完整 NX 插件。此前已核对默认 v4.8、显式 v4.7.2 及独立输出目录，本次没有改构建目标。

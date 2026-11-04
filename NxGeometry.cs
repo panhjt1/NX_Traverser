@@ -192,7 +192,7 @@ internal static class NxGeometry
         if (part == null) throw new InvalidOperationException("无法取得测量目标。");
         List<Tag> bodies = new VisibleBodyCollector(context).Collect();
         UFSession uf = UFSession.GetUFSession();
-        Tag temporaryCsys = Tag.Null, temporaryMatrix = Tag.Null;
+        Tag temporaryCsys = Tag.Null;
         var localOrigin = new double[3];
         var localAxes = new double[] { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
         if (mode == "WCS")
@@ -213,9 +213,20 @@ internal static class NxGeometry
         {
             // Occurrence geometry and query CSYS must both be in current work
             // assembly space. NULL_TAG would mean its WCS, not the target ACS.
-            TraversalCancellation.NxCall("Create measurement matrix", () => uf.Csys.CreateMatrix(axes, out temporaryMatrix));
-            TraversalCancellation.NxCall("Create temporary measurement CSYS",
-                () => uf.Csys.CreateTempCsys(origin, temporaryMatrix, out temporaryCsys));
+            // Supply values, not an NXMatrix tag: NX manages the underlying
+            // orientation object, which is not an independently owned resource.
+            // Only the new, non-displayed/non-filed CSYS belongs to this query.
+            TraversalCancellation.NxCall("Create self-owned measurement CSYS", () =>
+            {
+                CartesianCoordinateSystem csys = context.AssemblyPart.CoordinateSystems.CreateCoordinateSystem(
+                    new Point3d(origin[0], origin[1], origin[2]),
+                    new Matrix3x3 { Xx = axes[0], Xy = axes[1], Xz = axes[2],
+                        Yx = axes[3], Yy = axes[4], Yz = axes[5], Zx = axes[6], Zy = axes[7], Zz = axes[8] },
+                    true);
+                temporaryCsys = csys.Tag;
+                RunLog.Write("[Measurement frame] SelfCreatedCsys=" + temporaryCsys +
+                    " Temporary=True；仅清理本次测量坐标系，不删除模型辅助对象或方向矩阵。");
+            });
             int index = 0;
             foreach (Tag body in bodies)
             {
@@ -235,23 +246,19 @@ internal static class NxGeometry
         catch (Exception ex) { queryFailure = ex; throw; }
         finally
         {
-            // Only delete temporary objects created here; never delete the actual WCS.
+            // Only this call's CSYS is owned. Never delete a matrix, source WCS,
+            // or anything obtained by enumerating the user's auxiliary geometry.
             try
             {
-                // CSYS deletion may also remove its matrix. Never reuse that
-                // stale tag blindly, or delete a matrix still owned by a CSYS
-                // whose cleanup failed. A failed CSYS creation still leaves
-                // its independently created matrix to be cleaned here.
-                DeleteMeasurementTemporary(uf, temporaryCsys, "CSYS");
-                DeleteMeasurementTemporary(uf, temporaryMatrix, "matrix");
+                DeleteMeasurementCsys(uf, temporaryCsys);
             }
             catch (Exception ex)
             {
                 AssemblyTraverser.RequestStop();
                 NxPartResources.KeepCurrentPartsOpen();
                 if (queryFailure != null) RunLog.Error("清理失败前的测量异常", queryFailure);
-                RunLog.Error("删除临时测量坐标系/矩阵失败", ex);
-                throw new InvalidOperationException("临时测量对象未完整清理，已停止。", ex);
+                RunLog.Error("清理本次测量坐标系失败", ex);
+                throw new InvalidOperationException("本次创建的临时测量坐标系未完整清理，已停止。", ex);
             }
         }
         TraversalCancellation.Checkpoint();
@@ -260,11 +267,11 @@ internal static class NxGeometry
         return new BoundingBoxResult(dimensions, part.PartUnits.ToString(), mode, bodies.Count);
     }
 
-    private static void DeleteMeasurementTemporary(UFSession uf, Tag tag, string kind)
+    private static void DeleteMeasurementCsys(UFSession uf, Tag tag)
     {
         if (tag == Tag.Null) return;
-        string label = kind + " tag=" + tag;
-        TraversalCancellation.NxCall("Delete measurement temporary " + label, () =>
+        string label = "SelfCreatedCsys=" + tag;
+        TraversalCancellation.NxCall("Release self-owned measurement CSYS tag=" + tag, () =>
         {
             int before = uf.Obj.AskStatus(tag);
             RunLog.Write("[Measurement cleanup] " + label + " Before=" + before);
