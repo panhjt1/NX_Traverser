@@ -6,6 +6,7 @@ using NXOpen;
 
 internal sealed class RunLog : IDisposable
 {
+    internal const string DiagnosticRevision = "nx2512-measure-cleanup-20261104";
     private static RunLog _current;
     private static int _callId;
     private readonly StreamWriter _writer;
@@ -33,6 +34,16 @@ internal sealed class RunLog : IDisposable
     {
         var nx = ex as NXException;
         Write("[ERROR] " + stage + (nx == null ? "" : " NXError=" + nx.ErrorCode) + ": " + ex.Message);
+        // Keep the information window concise; preserve stack/inner exceptions
+        // in the already auto-flushed file for the local SDK agent.
+        if (_current != null) _current._writer.WriteLine("[Exception detail] " + stage + Environment.NewLine + ex);
+    }
+
+    public static void WriteBuildIdentity()
+    {
+        var assembly = typeof(AssemblyTraverser).Assembly;
+        Write("[Build] " + DiagnosticRevision + " MVID=" + assembly.ManifestModule.ModuleVersionId);
+        Write("[Assembly] " + assembly.Location);
     }
 
     // All NX calls remain on the calling NX thread. A paired record identifies

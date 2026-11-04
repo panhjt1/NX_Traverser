@@ -25,6 +25,8 @@ internal static class BoundingBoxExportTests
             ScopeAndAuxiliary(output);
             CoordinateQueries(output);
             FailureAndCleanup(output);
+            DiagnosticEvidence(output);
+            TemporaryLifetime(output);
         }
         finally { Directory.Delete(output, true); }
         return _checks;
@@ -36,6 +38,9 @@ internal static class BoundingBoxExportTests
         var uf = UFSession.Instance;
         uf.Assem.Members.Clear(); uf.Modl.Vertices.Clear(); uf.Modl.Queried.Clear();
         uf.Modl.Fail = false; uf.Modl.AfterQuery = null; uf.Obj.Deleted.Clear(); uf.Obj.Fail = false;
+        uf.Obj.States.Clear(); uf.Obj.Cascade = false; uf.Obj.Refuse = Tag.Null;
+        uf.Obj.ErrorTag = Tag.Null; uf.Obj.DeleteBeforeError = false; uf.Obj.StatusError = false;
+        uf.Csys.FailCreateTemp = false;
         uf.Csys.Origin = new double[3]; uf.Csys.Axes = new double[] { 1,0,0,0,1,0,0,0,1 };
         uf.Csys.SourceOrigin = new double[3]; uf.Csys.SourceAxes = (double[])uf.Csys.Axes.Clone();
         uf.Assem.Members[component.Tag] = new NXObject[] { root.Views.WorkView.Scene[0] };
@@ -187,6 +192,93 @@ internal static class BoundingBoxExportTests
         Check(AssemblyTraverser.StopRequested,"Cleanup failure stops further loading");
         uf.Obj.Fail=false; AssemblyTraverser.StopRequested=false;
     }
+
+    private static void DiagnosticEvidence(string output)
+    {
+        Part root; Component comp;
+        Session session = Setup(out root, out comp);
+        comp.DisplayName = "diagnostic target/003";
+        File.Delete(Path.Combine(output, "BoundingBoxResult.csv"));
+        string logPath = Path.Combine(output, "Traversal.log");
+        UFSession.Instance.Modl.AfterQuery = () =>
+        {
+            // Evidence must already be on disk while NX is still inside a call;
+            // a native non-return cannot rely on catch/finally to record it.
+            string during = File.ReadAllText(logPath);
+            Check(during.Contains("Body=1/1 tag=3000") && during.Contains("Component=diagnostic target/003(2000)") &&
+                during.Contains("Part=readonly prototype State=PartiallyLoaded"),
+                "Pending exact call has flushed body index and source-part identity");
+            Check(during.Contains("[NX call begin]") && during.Contains("AskBoundingBoxExact occurrence=3000"),
+                "Pending exact call is recorded before its completion");
+            throw new InvalidOperationException("outer query failure", new IOException("inner query detail"));
+        };
+        using (var log = new RunLog(session, output))
+        {
+            RunLog.WriteBuildIdentity();
+            try { Export(comp, session, output, "ACS"); }
+            catch (InvalidOperationException ex) { RunLog.Error("diagnostic query", ex); }
+        }
+        string text = File.ReadAllText(logPath);
+        Check(text.Contains(RunLog.DiagnosticRevision) && text.Contains("MVID=") && text.Contains("[Assembly] "),
+            "Disk log identifies the actual loaded binary");
+        Check(text.Contains("[Exception detail]") && text.Contains("inner query detail") &&
+            !session.ListingWindow.Lines.Exists(x => x.Contains("inner query detail")),
+            "Full inner exception is on disk without flooding the information window");
+        Check(text.Contains("Delete measurement temporary CSYS tag=9003") && text.Contains("Delete measurement temporary matrix tag=9002") &&
+            text.Contains("Completed=False"), "Failed query and both cleanup calls leave paired evidence");
+        Check(!File.Exists(Path.Combine(output, "BoundingBoxResult.csv")), "Diagnostic changes cannot emit an incomplete dimension row");
+        UFSession.Instance.Modl.AfterQuery = null;
+    }
+
+    private static void TemporaryLifetime(string output)
+    {
+        Part root; Component comp;
+        var uf = UFSession.Instance;
+        Session session = Setup(out root, out comp);
+        uf.Obj.Cascade = true;
+        Export(comp, session, output, "ACS");
+        Check(uf.Obj.Deleted.Count == 1 && uf.Obj.AskStatus((Tag)9002) == UFConstants.UF_OBJ_DELETED,
+            "CSYS cascade removal does not attempt a second delete on its dead matrix tag");
+        Check(Row(output).Contains(",2.000,3.000,4.000,") && !AssemblyTraverser.StopRequested,
+            "Cascade cleanup permits a complete dimension row and continued traversal");
+
+        // The same stale-parameter code is acceptable only with independent
+        // proof of deletion; a live object must still stop the run.
+        foreach (bool deleted in new[] { true, false })
+        {
+            session = Setup(out root, out comp);
+            File.Delete(Path.Combine(output, "BoundingBoxResult.csv"));
+            uf.Obj.ErrorTag = (Tag)9002; uf.Obj.DeleteBeforeError = deleted;
+            if (deleted) Export(comp, session, output, "ACS");
+            else Fails(() => Export(comp, session, output, "ACS"), "1105004 with live matrix remains a cleanup failure");
+            Check(File.Exists(Path.Combine(output, "BoundingBoxResult.csv")) == deleted && AssemblyTraverser.StopRequested != deleted,
+                "Status, not error code alone, decides cleanup success");
+        }
+
+        foreach (Tag refused in new[] { (Tag)9003, (Tag)9002 })
+        {
+            session = Setup(out root, out comp);
+            File.Delete(Path.Combine(output, "BoundingBoxResult.csv"));
+            uf.Obj.Refuse = refused;
+            Fails(() => Export(comp, session, output, "ACS"), "A successful return without actual deletion is rejected");
+            Check(AssemblyTraverser.StopRequested && !File.Exists(Path.Combine(output, "BoundingBoxResult.csv")),
+                "Unreleased temporary cannot produce a success row");
+            if (refused == (Tag)9003)
+                Check(!uf.Obj.Deleted.Contains((Tag)9002), "Do not delete a matrix still referenced by an uncleared CSYS");
+        }
+
+        session = Setup(out root, out comp);
+        uf.Csys.FailCreateTemp = true;
+        Fails(() => Export(comp, session, output, "ACS"), "CSYS creation failure propagates");
+        Check(uf.Obj.Deleted.Count == 1 && uf.Obj.Deleted[0] == (Tag)9002 && !AssemblyTraverser.StopRequested,
+            "Failure before CSYS creation releases the standalone matrix");
+
+        session = Setup(out root, out comp);
+        uf.Obj.StatusError = true;
+        Fails(() => Export(comp, session, output, "ACS"), "Unverifiable object status remains a cleanup failure");
+        Check(uf.Obj.Deleted.Count == 0 && AssemblyTraverser.StopRequested, "Unknown status never leads to a blind delete");
+        Setup(out root, out comp); // Reset test-only faults for the other suites.
+    }
 }
 
 namespace NXOpen
@@ -229,10 +321,16 @@ namespace NXOpen.UF
     public class UFCsys
     {
         public double[] Origin,Axes,SourceOrigin,SourceAxes;
+        public bool FailCreateTemp;
         public void AskCsysInfo(Tag tag,out Tag matrix,double[] origin) { matrix=(Tag)9001;SourceOrigin.CopyTo(origin,0); }
         public void AskMatrixValues(Tag tag,double[] axes) { SourceAxes.CopyTo(axes,0); }
-        public void CreateMatrix(double[] axes,out Tag matrix) { Axes=(double[])axes.Clone();matrix=(Tag)9002; }
-        public void CreateTempCsys(double[] origin,Tag matrix,out Tag csys) { Origin=(double[])origin.Clone();csys=(Tag)9003; }
+        public void CreateMatrix(double[] axes,out Tag matrix)
+        { Axes=(double[])axes.Clone();matrix=(Tag)9002;UFSession.Instance.Obj.States[matrix]=UFConstants.UF_OBJ_ALIVE; }
+        public void CreateTempCsys(double[] origin,Tag matrix,out Tag csys)
+        {
+            csys=Tag.Null;if(FailCreateTemp)throw new InvalidOperationException("CSYS creation failed");
+            Origin=(double[])origin.Clone();csys=(Tag)9003;UFSession.Instance.Obj.States[csys]=UFConstants.UF_OBJ_TEMPORARY;
+        }
     }
     public class UFModl
     {
@@ -264,6 +362,27 @@ namespace NXOpen.UF
     public class UFObj
     {
         public readonly List<Tag> Deleted=new List<Tag>();public bool Fail;
-        public void DeleteObject(Tag tag){Deleted.Add(tag);if(Fail)throw new InvalidOperationException("Simulated delete failure");}
+        public readonly Dictionary<Tag,int> States=new Dictionary<Tag,int>();
+        public bool Cascade, DeleteBeforeError, StatusError;
+        public Tag Refuse, ErrorTag;
+        public int AskStatus(Tag tag)
+        {
+            if(StatusError)throw new InvalidOperationException("Status query failed");
+            int state;return States.TryGetValue(tag,out state)?state:UFConstants.UF_OBJ_DELETED;
+        }
+        public void DeleteObject(Tag tag)
+        {
+            Deleted.Add(tag);
+            if(Fail)throw new InvalidOperationException("Simulated delete failure");
+            if(AskStatus(tag)==UFConstants.UF_OBJ_DELETED)throw new NXException(1105004);
+            if(tag==Refuse)return;
+            if(tag!=ErrorTag||DeleteBeforeError)States[tag]=UFConstants.UF_OBJ_DELETED;
+            if(tag==ErrorTag)throw new NXException(1105004);
+            if(Cascade&&tag==(Tag)9003)States[(Tag)9002]=UFConstants.UF_OBJ_DELETED;
+        }
+    }
+    public static class UFConstants
+    {
+        public const int UF_OBJ_DELETED=0, UF_OBJ_TEMPORARY=1, UF_OBJ_CONDEMNED=2, UF_OBJ_ALIVE=3;
     }
 }

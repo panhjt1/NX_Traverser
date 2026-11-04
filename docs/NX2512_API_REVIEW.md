@@ -1,6 +1,19 @@
 # NX 2512 官方 API 核对与审查记录
 
-核对日期：2026-11-04。本次基线：`ebf7c61`。NX API 核对以 **Siemens 官方 2512 文档**为依据，不把旧版社区示例视为新版本 API；用户运行证据和 Microsoft 构建资料另行注明。官方文档浏览器页面动态加载，本文链接到同一文档的正文或参考类。
+核对日期：2026-11-04。本次基线：`14501c9`。NX API 核对以 **Siemens 官方 2512 文档**为依据，不把旧版社区示例视为新版本 API；用户运行证据和 Microsoft 构建资料另行注明。官方文档浏览器页面动态加载，本文链接到同一文档的正文或参考类。
+
+## 本次：临时测量对象删除的状态契约
+
+用户补全日志显示 55 个精确查询完成，失败来自临时对象删除 `NXError=1105004`，随后程序按保护策略停止。这不是已证实的 AskBoundingBoxExact 崩溃。旧代码无条件先删 CSYS、再删其矩阵，没有验证 tag 是否仍存活；旧日志不区分删除角色，尚不能证明本次具体是哪个 tag 失效。
+
+- [UF_OBJ_delete_object](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_obj/global.html#UF_OBJ_delete_object) 明确：成功返回也不保证对象已删除，应使用 UF_OBJ_ask_status 确认。
+- [UFObj.AskStatus(Tag)](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a80066.html) 的 .NET 签名在官方类页核对为返回 int；[原生契约](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_obj/global.html#UF_OBJ_ask_status) 返回四种状态，并提示避免操作失效对象；NX 可删除或复用它们。
+- [uf_obj_types.h](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_obj/uf_obj_types.html) 定义 `UF_OBJ_DELETED=0`、`UF_OBJ_TEMPORARY=1`、`UF_OBJ_CONDEMNED=2`、`UF_OBJ_ALIVE=3`。实现使用对应 UFConstants 名称，非猜测错误码或反射接口。
+- [CreateTempCsys](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_csys/global.html#UF_CSYS_create_temp_csys) 创建临时 CSYS 并接收关联矩阵。文档没有保证二者可以永远作为两个独立存活对象连续删除；也没有足够依据宣称在所有情况下删除 CSYS 必定删除矩阵。
+
+修复在 NxGeometry 的公共测量服务内，按 CSYS→matrix 顺序先查状态再删除，删除后复核。已删除对象不再重复调用 DeleteObject；只对本次持有的 Alive/Temporary 对象尝试清理；CSYS 清理不确定时不继续删矩阵。1105004 只有在后续 AskStatus 明确返回 Deleted 时才接受，否则仍失败/停止/保留部件；不吞掉状态查询错误，不将 Condemned 当作删除完成。创建/查询失败与取消仍经 finally 清理。
+
+新增创建/删除角色、tag、前后状态、实体进度与 DLL/MVID 标识，完整异常链写文件。265 项离线断言包含连带删除与独立删除、实际未删除、创建失败及后续事务/卸载路径；net472 引用编译和语法检查通过。原生状态与新 API 的 SDK 编译仍由本地确认。单独截图报错目前缺少对应日志，不因修复测量清理就视为已解决。
 
 ## 版本、构建和部署
 
@@ -21,7 +34,7 @@
 
 本次使用 Microsoft 官方 net472 引用程序集编译了无 NX 依赖的 `BoundingBoxMath.cs`、`ExportUtilities.cs` 和核心测试程序，并检查了两种目标的 MSBuild 项目求值。未在 Framework 4.7.2 运行时执行测试，也未以 NX SDK 编译完整插件。
 
-## 本次：主循环与事务责任边界
+## 此前：主循环与事务责任边界
 
 对照原版 `2470a54` 的 BuildTransactionHandlers/Process/Finish 主线，本次保持顺序事务列表，新增显式注册重载而不把递归写进事务。标准接口为 `Process(TransactionContext)` + `Finish()`；这是源码接口调整，本地自定义扩展需迁移并重新编译，旧的直接 Process(Component, Session, ...) 入口已移除。README 给出责任表和接入示例。
 
@@ -164,4 +177,4 @@ CSV 首五列兼容，范围列为 `DisplayedOccurrenceBodies`；同一原型不
 
 ## 验证边界
 
-本次已执行 DLX/XML/映射检查及 243 项独立 C# 断言。数学/文本/所有权策略之外，真实 AssemblyTraverser/TransactionContext/RunLog/取消监控、资源管理器、原装配共享上下文、NxGeometry 部分加载选择、装配内截图及实际 BoundingBoxExporter 代码与显式 NX 测试替身组合编译并验证控制流；替身不证明官方 API 签名或原生行为。还以官方 net472 框架引用完成同一测试程序的编译，未在 Framework 4.7.2 运行。未执行 NX SDK 全量编译、NX 原生 DLX 加载、PNG 渲染、Teamcenter 实机测试或本地签名；这些由 [本地 agent 交接](../LOCAL_AGENT_PROMPT.md) 列出。纯算法测试通过不等于 NX 2512 集成验收通过。
+本次已执行 DLX/XML/映射检查及 265 项独立 C# 断言。数学/文本/所有权策略之外，真实 AssemblyTraverser/TransactionContext/RunLog/取消监控、资源管理器、原装配共享上下文、NxGeometry 部分加载选择、装配内截图及实际 BoundingBoxExporter 代码与显式 NX 测试替身组合编译并验证控制流；替身不证明官方 API 签名或原生行为。还以官方 net472 框架引用完成同一测试程序的编译，未在 Framework 4.7.2 运行。未执行 NX SDK 全量编译、NX 原生 DLX 加载、PNG 渲染、Teamcenter 实机测试或本地签名；这些由 [本地 agent 交接](../LOCAL_AGENT_PROMPT.md) 列出。纯算法测试通过不等于 NX 2512 集成验收通过。

@@ -108,6 +108,7 @@ public sealed class AssemblyTraverser
             Directory.CreateDirectory(output);
             log = new RunLog(session, output);
             RunLog.Write("输出目录: " + output);
+            RunLog.WriteBuildIdentity();
             RunLog.Write("每个匹配原型导出一次；匹配装配后不再单独导出其后代。");
             RunLog.Write("逐节点释放临时加载部件；保留原有完整加载/已修改/活动部件。原有干净部分加载部件被本次使用后可卸载。");
             RunLog.Write("事务顺序: " + string.Join(" -> ", _handlers.ConvertAll(h => h.GetType().Name)));

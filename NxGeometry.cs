@@ -208,19 +208,23 @@ internal static class NxGeometry
         double[] origin, axes;
         ExportUtilities.FrameInAssembly(localOrigin, localAxes, context.Transform, out origin, out axes);
         var box = new BoundingBoxMath();
+        Exception queryFailure = null;
         try
         {
             // Occurrence geometry and query CSYS must both be in current work
             // assembly space. NULL_TAG would mean its WCS, not the target ACS.
-            uf.Csys.CreateMatrix(axes, out temporaryMatrix);
-            uf.Csys.CreateTempCsys(origin, temporaryMatrix, out temporaryCsys);
+            TraversalCancellation.NxCall("Create measurement matrix", () => uf.Csys.CreateMatrix(axes, out temporaryMatrix));
+            TraversalCancellation.NxCall("Create temporary measurement CSYS",
+                () => uf.Csys.CreateTempCsys(origin, temporaryMatrix, out temporaryCsys));
+            int index = 0;
             foreach (Tag body in bodies)
             {
                 TraversalCancellation.Checkpoint();
                 var corner = new double[3];
                 var directions = new double[3, 3];
                 var distances = new double[3];
-                RunLog.Write("[BoundingBox " + mode + "] body=" + body);
+                RunLog.Write("[BoundingBox " + mode + "] Body=" + (++index) + "/" + bodies.Count +
+                    " tag=" + body + " " + DescribeMeasurementBody(body));
                 NxPartResources.BeforeLoad(null); // Exact query may retrieve geometry internally.
                 TraversalCancellation.NxCall("AskBoundingBoxExact occurrence=" + body,
                     () => uf.Modl.AskBoundingBoxExact(body, temporaryCsys, corner, directions, distances));
@@ -228,26 +232,86 @@ internal static class NxGeometry
                 box.Add(corner, directions, distances, origin, axes);
             }
         }
+        catch (Exception ex) { queryFailure = ex; throw; }
         finally
         {
             // Only delete temporary objects created here; never delete the actual WCS.
-            var cleanupErrors = new List<Exception>();
-            foreach (Tag tag in new[] { temporaryCsys, temporaryMatrix })
+            try
             {
-                try { if (tag != Tag.Null) uf.Obj.DeleteObject(tag); }
-                catch (Exception ex) { cleanupErrors.Add(ex); }
+                // CSYS deletion may also remove its matrix. Never reuse that
+                // stale tag blindly, or delete a matrix still owned by a CSYS
+                // whose cleanup failed. A failed CSYS creation still leaves
+                // its independently created matrix to be cleaned here.
+                DeleteMeasurementTemporary(uf, temporaryCsys, "CSYS");
+                DeleteMeasurementTemporary(uf, temporaryMatrix, "matrix");
             }
-            if (cleanupErrors.Count > 0)
+            catch (Exception ex)
             {
                 AssemblyTraverser.RequestStop();
                 NxPartResources.KeepCurrentPartsOpen();
-                foreach (Exception ex in cleanupErrors) RunLog.Error("删除临时测量坐标系/矩阵失败", ex);
-                throw new InvalidOperationException("临时测量对象未完整清理，已停止。", cleanupErrors[0]);
+                if (queryFailure != null) RunLog.Error("清理失败前的测量异常", queryFailure);
+                RunLog.Error("删除临时测量坐标系/矩阵失败", ex);
+                throw new InvalidOperationException("临时测量对象未完整清理，已停止。", ex);
             }
         }
         TraversalCancellation.Checkpoint();
         double[] dimensions = box.Dimensions();
         for (int i = 0; i < dimensions.Length; ++i) dimensions[i] *= unitScale;
         return new BoundingBoxResult(dimensions, part.PartUnits.ToString(), mode, bodies.Count);
+    }
+
+    private static void DeleteMeasurementTemporary(UFSession uf, Tag tag, string kind)
+    {
+        if (tag == Tag.Null) return;
+        string label = kind + " tag=" + tag;
+        TraversalCancellation.NxCall("Delete measurement temporary " + label, () =>
+        {
+            int before = uf.Obj.AskStatus(tag);
+            RunLog.Write("[Measurement cleanup] " + label + " Before=" + before);
+            if (before == UFConstants.UF_OBJ_DELETED)
+            {
+                RunLog.Write("[Measurement cleanup] " + label + " already deleted; skip");
+                return;
+            }
+            if (before != UFConstants.UF_OBJ_ALIVE && before != UFConstants.UF_OBJ_TEMPORARY)
+                throw new InvalidOperationException("临时测量对象状态不可安全删除: " + label + " status=" + before);
+
+            NXException deleteError = null;
+            try { uf.Obj.DeleteObject(tag); }
+            catch (NXException ex)
+            {
+                // Invalid parameter alone does NOT establish successful cleanup.
+                // Accept only this known stale-tag symptom, and only if AskStatus
+                // independently proves that this owned temporary is now deleted.
+                if (ex.ErrorCode != 1105004) throw;
+                deleteError = ex;
+            }
+            int after = uf.Obj.AskStatus(tag);
+            RunLog.Write("[Measurement cleanup] " + label + " After=" + after);
+            if (after != UFConstants.UF_OBJ_DELETED)
+                throw new InvalidOperationException("临时测量对象仍未删除: " + label + " status=" + after, deleteError);
+            if (deleteError != null)
+                RunLog.Write("[Measurement cleanup] " + label + " NXError=1105004; deletion verified by AskStatus");
+        }, cancelable: false);
+    }
+
+    // Diagnostics only: do not load geometry or let a failed metadata read
+    // replace the actual exact-query outcome. All access stays on the NX thread.
+    private static string DescribeMeasurementBody(Tag tag)
+    {
+        try
+        {
+            var body = NXOpen.Utilities.NXObjectManager.Get(tag) as Body;
+            if (body == null) return "Metadata=not a Body";
+            Component component = body.OwningComponent;
+            Part part = component == null ? body.OwningPart : component.Prototype as Part;
+            return "Component=" + (component == null ? "<work-part body>" : component.DisplayName + "(" + component.Tag + ")") +
+                " Part=" + (part == null ? "<unavailable>" : part.Name + " State=" + part.PartLoadState +
+                    " ReadOnly=" + part.IsReadOnly + " Modified=" + part.IsModified);
+        }
+        catch (Exception ex)
+        {
+            return "Metadata unavailable=" + ex.GetType().Name + ": " + ex.Message;
+        }
     }
 }

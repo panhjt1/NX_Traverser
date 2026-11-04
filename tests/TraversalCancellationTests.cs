@@ -155,6 +155,20 @@ internal static class TraversalCancellationTests
             Check(UFSession.Instance.Obj.Deleted.Count >= 2, "Canceled exact query cleans temporary CSYS/matrix");
 
             session = Setup(out root, out first, out second);
+            firstPart = (Part)first.Prototype;
+            UFSession.Instance.Obj.Cascade = true;
+            images = 0;
+            session.CaptureObserver = view => ++images;
+            var cascadeConfig = Config(output, true);
+            cascadeConfig.idPatterns = new[] { "first" };
+            try { AssemblyTraverser.Run(cascadeConfig); }
+            finally { UFSession.Instance.Obj.Cascade = false; }
+            Check(images == 2 && firstPart.Closed && !AssemblyTraverser.StopRequested,
+                "Matrix cascade cleanup allows following image transaction and per-node unload");
+            Check(session.ListingWindow.Lines.Exists(x => x.Contains("成功事务=2") && x.Contains("失败=0") && x.Contains("停止=False")),
+                "Verified cleanup is counted as a successful measurement, not a retained-parts stop");
+
+            session = Setup(out root, out first, out second);
             images = 0;
             session.CaptureObserver = view => { ++images; if (images == 1) throw new IOException("ordinary export error"); };
             AssemblyTraverser.Run(Config(output));
