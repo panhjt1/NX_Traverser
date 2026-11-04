@@ -1,15 +1,23 @@
 # NX 2512 官方 API 核对与审查记录
 
-核对日期：2026-11-04。本次基线：`5bf2667`。NX API 核对以 **Siemens 官方 2512 文档**为依据，不把旧版社区示例视为新版本 API；用户运行证据和 Microsoft 构建资料另行注明。官方文档浏览器页面动态加载，本文链接到同一文档的正文或参考类。
+核对日期：2026-11-04。本次基线：`95c662a`。NX API 核对以 **Siemens 官方 2512 文档**为依据，不把旧版社区示例视为新版本 API；用户运行证据和 Microsoft 构建资料另行注明。官方文档浏览器页面动态加载，本文链接到同一文档的正文或参考类。
 
-## 本次：本地编译反馈与分钟结果目录
+## 本次：DLX 资产改名同步
+
+用户报告本地 `019744b` 已完成编译部署，并要求统一使用 `NX_Traverser.dlx`。GitHub 未找到该提交，云端以远端 `95c662a` 为基线按清单同步，不据此宣称取得了本地其他修改。
+
+本次没有新增或替换 NX API；`UI.CreateDialog` 的同目录路径与回退名称均改为新 DLX 名，根节点 title、项目复制项、构建 XML 预检/哈希、资产验证和部署说明保持一致。DLL/入口类仍为 NX_Traverser，DLX 控件及遍历/导出算法不变。旧 DLL 字符串不会因磁盘文件改名而变化，更新源码后须在本地重新编译、签名、配套部署。当前 Build 标识为 `nx2512-dlx-rename-20261104`。
+
+云端本次仅检查 XML/资产引用、入口一致性、语法和源码归档；本地编译部署成功记录来自用户反馈，不能扩展为云端 SDK 或完整 Teamcenter 验收通过。分支 ZIP 自动包含新资产，仓库没有独立 Release 或 ZIP 工作流。
+
+## 此前：本地编译反馈与分钟结果目录
 
 本地 agent 提供了 NxGeometry 的 CS0104/CS0266、缺少 NXOpen.Utilities 引用，以及入口类/程序集命名不一致的反馈。此前离线替身的 OwningPart 类型过窄，UF 命名空间又缺少同名类型，因而漏掉了两个源码错误；已修正生产源码和替身。**本次环境仍无 Siemens SDK，用户已明确先推送源码、交由本地编译；以下依据不等于编译成功。**
 
 - [NXObject.OwningPart](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a69838.html) 官方 2512 签名为 `NXOpen.BasePart`。诊断代码改为 `body.OwningPart as Part`；类型不是 Part 时只输出不可用元数据，不影响几何查询。
 - NXOpen 与 NXOpen.UF 同名 PartLoadState 的歧义按本地编译证据处理，使用显式 `using PartLoadState = NXOpen.PartLoadState;`。替身也保留此冲突，移除别名即编译失败。
 - [Compiling and linking .NET](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/nx_api/nxopen_prog_guide/nel1734216491521/tms1734216491827/compiling_net.html) 将 `NXOpen.Utilities.dll` 列为 Framework 托管库。项目补显式引用、Copy Local=false 和文件存在检查，构建脚本同步，四项 SDK 引用来自同一安装目录。
-- 采用本地 agent 的 B 选项，AssemblyName/公共入口类统一为 `NX_Traverser`；保留当前 DLL 文件名、Main/GetUnloadOption 签名及原 DLX 资产名。旧菜单显式类名需要迁移。这里只消除入口配置的不一致，不把静态名称检查当作 NX loader 实测。
+- 采用本地 agent 的 B 选项，AssemblyName/公共入口类统一为 `NX_Traverser`；保留当前 DLL 文件名及 Main/GetUnloadOption 签名，DLX 资产在后续本次更新统一为 `NX_Traverser.dlx`。旧菜单显式类名需要迁移。这里只消除入口配置的不一致，不把静态名称检查当作 NX loader 实测。
 - 输出目录使用本机本地时间 `yyyyMMddHHmm`，重名加 `_2`/`_3`；分配与命名统一在已有 ExportUtilities，主循环创建一次，事务共用。保留碰撞目录/文件，不更改测量、辅助对象隐藏、停止及卸载策略。
 
 296 项替身/独立离线断言、net472 引用编译、C# 7.3 语法和 DLX/引用/入口静态检查通过；额外负向编译分别撤销别名和 as Part，确认能检出 CS0104/CS0266。当前标识 `nx2512-build-path-fixes-20261104`；真正 SDK 编译、入口加载及 Windows 同分钟运行仍需本地验收。

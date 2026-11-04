@@ -2,7 +2,7 @@
 
 在 Siemens NX / Teamcenter 集成环境遍历装配，导出多视角 PNG 和 ACS/WCS 包围盒 CSV。此分支面向 **NX 2512，C# .NET Framework（默认 4.8，可显式试编译 4.7.2），Windows x64**。
 
-当前是供本地编译和验收的源码版本：DLX/XML、核心数学与文本回归已检查，NX SDK 编译和 Teamcenter 实机测试尚待完成。
+本地 agent 已反馈改名版本 `019744b` 编译部署成功。云端按反馈同步源码，没有 NX SDK；下载本次源码后仍需由本地重新编译、签名和验收。
 
 ## 本地编译与部署
 
@@ -18,7 +18,7 @@
 
 默认产物位于 `bin/Release/v4.8/`；显式选择 4.7.2 时位于 `bin/Release/v4.7.2/`。
 
-将编译并按站点要求签名的 `NX_Traverser.dll` 与 `ClassLibrary1.dlx` 放在一起，从 NX 的“文件 → 执行 → NX Open/Designcenter Open”加载 DLL。程序集和入口类统一为 `NX_Traverser`，入口为 `NX_Traverser.Main`，卸载钩子为该类的 `GetUnloadOption`；原 DLX 文件名保留。本项目是多文件类库，不应把 `UIscripts.cs` 单独作为 Journal 播放。旧菜单或调用代码若显式指定 `ClassLibrary1.Main`，需同步改成新入口。
+将编译并按站点要求签名的 `NX_Traverser.dll` 与 `NX_Traverser.dlx` 放在一起，从 NX 的“文件 → 执行 → NX Open/Designcenter Open”加载 DLL。程序集和入口类统一为 `NX_Traverser`，入口为 `NX_Traverser.Main`，卸载钩子为该类的 `GetUnloadOption`。DLL 内部加载的对话框名称也已同步为 `NX_Traverser.dlx`，升级时必须重新编译并签名，再配套部署 DLL/DLX，仅改磁盘文件名无效。本项目是多文件类库，不应把 `UIscripts.cs` 单独作为 Journal 播放。旧菜单或调用代码若显式指定 `ClassLibrary1.Main`，需同步改成新入口。
 
 DLX 已修复 XML 声明位置并保留原始控件 schema。其 `NX="1946"` 标记记录生成来源，不是运行时版本开关；请用 NX 2512 Block UI Styler 验证并按需另存。
 

@@ -4,7 +4,7 @@ import re
 import xml.etree.ElementTree as ET
 
 repo = Path(__file__).resolve().parents[1]
-data = (repo / "ClassLibrary1.dlx").read_bytes()
+data = (repo / "NX_Traverser.dlx").read_bytes()
 assert data.startswith(b'<?xml'), "XML declaration must start the DLX"
 root = ET.fromstring(data)
 items = root.findall(".//item")

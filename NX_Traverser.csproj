@@ -45,7 +45,7 @@
     <EmbeddedResource Include="$(NXInstallDir)\UGOPEN\NXSigningResource.res">
       <LogicalName>NXSigningResource.res</LogicalName>
     </EmbeddedResource>
-    <None Include="ClassLibrary1.dlx">
+    <None Include="NX_Traverser.dlx">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

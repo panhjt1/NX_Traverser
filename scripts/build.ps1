@@ -28,7 +28,7 @@ if ($msbuildCommand) {
 }
 # Parse XML before compiling so a broken or mismatched asset cannot be deployed.
 $document = New-Object System.Xml.XmlDocument
-$document.Load((Join-Path $repoRoot 'ClassLibrary1.dlx'))
+$document.Load((Join-Path $repoRoot 'NX_Traverser.dlx'))
 $logDirectory = Join-Path $repoRoot 'artifacts'
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 & $msbuild (Join-Path $repoRoot 'NX_Traverser.csproj') /t:Rebuild /m `
@@ -41,5 +41,5 @@ if ($LASTEXITCODE -ne 0) {
 $output = Join-Path $repoRoot "bin\$Configuration\$TargetFrameworkVersion"
 $nxCopies = Get-ChildItem -LiteralPath $output -Filter 'NXOpen*.dll'
 if ($nxCopies) { throw '输出目录存在 NX SDK DLL，请清理旧输出；不得随插件部署 NX SDK DLL。' }
-Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $output 'NX_Traverser.dll'), (Join-Path $output 'ClassLibrary1.dlx')
+Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $output 'NX_Traverser.dll'), (Join-Path $output 'NX_Traverser.dlx')
 Write-Host "构建完成: $output。按 LOCAL_AGENT_PROMPT.md 在本地签名、验收后部署。"

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Dialog ContainerItems="1" DialogMode="1" Expanded="1" NX="1946" Saved="Wed Jun  3 16:30:23 2026" class="" creator="pan.hejitian" id="Dialog" languageInfo="Language and Codeset: simpl_chinese 13" name="Dialog" notes="" title="ClassLibrary1.dlx" type="uicomp" version="1.0.0">
+<Dialog ContainerItems="1" DialogMode="1" Expanded="1" NX="1946" Saved="Wed Jun  3 16:30:23 2026" class="" creator="pan.hejitian" id="Dialog" languageInfo="Language and Codeset: simpl_chinese 13" name="Dialog" notes="" title="NX_Traverser.dlx" type="uicomp" version="1.0.0">
   <item Expanded="1" class="UGS::UI::Comp::NativeFolderBrowser" hierarchy="" icon="folder.bmp" id="filePath" name="filePath" notes="" presentation="通过浏览选择文件夹" type="uicomp">
     <PropertyList id="id" mode="0">
       <Property ClassID="UGS::UICOMP" group="General::" hierarchy="UGS::UI::Comp::NativeFolderBrowser" id="API Name" mask="16656" name="API Name" sname="BlockID" source="3" type="string" value="filePath" />

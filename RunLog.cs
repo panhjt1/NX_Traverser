@@ -7,7 +7,7 @@ using NXOpen;
 
 internal sealed class RunLog : IDisposable
 {
-    internal const string DiagnosticRevision = "nx2512-build-path-fixes-20261104";
+    internal const string DiagnosticRevision = "nx2512-dlx-rename-20261104";
     private static RunLog _current;
     private static int _callId;
     private readonly StreamWriter _writer;

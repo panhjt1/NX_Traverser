@@ -1,6 +1,6 @@
 # 本地 agent：NX 2512 编译、验收与部署提示词
 
-更新时间：2026-11-04。目标分支：`fix/nx2512-teamcenter-readonly`；修改基线：`5bf2667`。这是本仓库的持续交接文档，后续每次代码、DLX 或构建配置变更都必须同步维护。
+更新时间：2026-11-04。目标分支：`fix/nx2512-teamcenter-readonly`；修改基线：`95c662a`。这是本仓库的持续交接文档，后续每次代码、DLX 或构建配置变更都必须同步维护。
 
 ## 任务与边界
 
@@ -18,13 +18,24 @@
 4. 在含 `NX_Traverser.csproj` 的解压目录中执行下方构建命令。构建脚本不调用 Git，也不自动下载依赖；NX 引用、MSBuild 和相应 Targeting Pack 需由本机提供。
 5. 如需额外开发包，通过可联网浏览器取得安装包/官方引用包后按公司允许的方式传入本地，不假设本地 agent 能执行在线安装或 NuGet 还原。
 
-## 本次更新：按分钟命名结果目录，吸收本地 SDK 编译反馈
+## 本次更新：DLX 与 DLL 统一使用 NX_Traverser 名称
 
-当前 Build 标识为 **`nx2512-build-path-fixes-20261104`**。本地反馈的两个 C# 类型错误、缺失引用以及入口命名不一致已纳入源码；以前的替身检查未覆盖这些类型形状，不能作为 SDK 编译通过的证据。按用户最新指示，**先推送修复源码，由本地 agent 完成 NX 2512 SDK 编译、签名和实机验收**。云端没有可用的 NX 2512 SDK，没有声称完整插件已编译通过。
+用户反馈本地改名版本 `019744b` 已编译部署成功。云端 GitHub 查询未找到该提交，远端分支仍为 `95c662a`，因此本次按用户列出的清单同步改名，没有声称合并了未取得的本地提交或其其他修改。保留本地改动，比较差异后再更新；本地编译部署成功是用户提供的反馈，不是云端 SDK 验证结果。
+
+- DLX 文件名及根节点 title 均改为 **`NX_Traverser.dlx`**，原控件 ID、布局、NX 生成器标记不变。
+- `UIscripts.cs` 的 DLL 同目录查找路径和 NX 搜索路径回退名称同时改为新名称。项目 `<None Include>`、构建脚本 XML 预检/产物 SHA256、`validate_dlx.py` 资产路径、README 和本文部署路径全部同步。
+- DLL 保持 **`NX_Traverser.dll`**，入口保持 **`NX_Traverser.Main`**。当前日志 Build 标识为 **`nx2512-dlx-rename-20261104`**；本次未改遍历、截图、测量、目录命名或卸载逻辑。
+- 仓库当前没有独立 Release 资产或自定义 ZIP 发布工作流；分支源码 ZIP 随此次提交自动更新。云端不上传未编译/未签名的 DLL 冒充部署包。
+
+本地 agent：下载新分支 ZIP 后先与 `019744b` 比较并保留本地其他修改，用 NX 2512 SDK 重新 Rebuild（可继续显式 v4.7.2），签名并配套部署 **`NX_Traverser.dll` + `NX_Traverser.dlx`**。仅重命名磁盘 DLX 不会更新旧 DLL 中的名称。用干净的部署目录启动，确认仅有新名称 DLX 时仍能打开对话框、九个控件及 OK/Cancel 正常；记录 DLL/DLX SHA256、实际加载路径及 Build 标识。云端本次检查 DLX/XML/引用与入口一致性、C# 语法、改名前后 DLX 内容和源码归档，未执行 NX SDK 编译或实机测试。
+
+## 此前更新：按分钟命名结果目录，吸收本地 SDK 编译反馈
+
+该版 Build 标识为 `nx2512-build-path-fixes-20261104`。本地反馈的两个 C# 类型错误、缺失引用以及入口命名不一致已纳入源码；以前的替身检查未覆盖这些类型形状，不能作为 SDK 编译通过的证据。按用户指示，先推送修复源码，由本地 agent 完成 NX 2512 SDK 编译、签名和实机验收。最新状态与标识见本次更新。
 
 1. `NxGeometry.cs` 添加 `using PartLoadState = NXOpen.PartLoadState;`，消除导入 NXOpen.UF 后的 CS0104。同一文件诊断方法将 `body.OwningPart` 显式 `as Part`，符合 2512 返回 BasePart 的签名，修正 CS0266。
 2. `NX_Traverser.csproj` 显式引用 `$(NXManagedDir)\NXOpen.Utilities.dll`，`Private=false`；项目预检查和 `scripts/build.ps1` 的引用列表也同步补齐。四个引用均来自本机 NX 2512 `NXBIN/managed`，不得复制 SDK DLL 到部署目录。
-3. 入口选 **B**：保留 AssemblyName 和产物名 `NX_Traverser.dll`，将 `UIscripts.cs` 的公共类、构造函数和 Main 内实例化统一为 `NX_Traverser`。入口是 **`NX_Traverser.Main`**，`GetUnloadOption` 在同一个类中；`ClassLibrary1.dlx` 文件名及控件 ID 保留。旧菜单/自定义调用若写死 `ClassLibrary1.Main` 或直接 new ClassLibrary1，须同步更新；不要再把 AssemblyName 改成 ClassLibrary1，也不要手工重命名 DLL。
+3. 入口选 **B**：保留 AssemblyName 和产物名 `NX_Traverser.dll`，将 `UIscripts.cs` 的公共类、构造函数和 Main 内实例化统一为 `NX_Traverser`。入口是 **`NX_Traverser.Main`**，`GetUnloadOption` 在同一个类中；DLX 名称已在本次更新统一为 `NX_Traverser.dlx`，控件 ID 保留。旧菜单/自定义调用若写死 `ClassLibrary1.Main` 或直接 new ClassLibrary1，须同步更新；不要再把 AssemblyName 改成 ClassLibrary1，也不要手工重命名 DLL。
 4. 结果目录由主循环统一调用 `ExportUtilities.CreateRunDirectory` 创建，不由事务各自命名。使用运行电脑的本地开始时间、固定公历格式 `yyyyMMddHHmm`：如 `202611041300`，同一分钟重复用 `202611041300_2`、`_3`，下一分钟恢复无后缀。跳过所有已存在的同名文件/目录，保留旧内容；多会话同时运行也不合并结果。内部短暂的暂存目录分配成功后改名，最终目录不含随机后缀。
 5. 测试替身同步将 NXObject.OwningPart 改为 BasePart，并加入 UF 同名 PartLoadState 类型；撤销生产代码的别名/转换时，离线编译已能分别复现 CS0104/CS0266。资产检查增加四项引用、Copy Local=false 和程序集/入口类名称一致性检查。这些仍是替身与静态检查，不能代替 Siemens SDK 编译或实际加载。
 
@@ -153,7 +164,7 @@
 
 | 文件 | 变更与本地关注点 |
 |---|---|
-| `ClassLibrary1.dlx`、`.gitignore` | XML 声明前空行修复，XML 格式化，移除个人绝对路径，改 OK/Cancel，DLX 纳入跟踪；保留全部 9 个控件。`NX="1946"` 保留真实生成器来源，需 2512 Styler 验证另存，不能仅把数字改成 2512 |
+| `NX_Traverser.dlx`、`.gitignore` | XML 声明前空行修复，XML 格式化，移除个人绝对路径，改 OK/Cancel，DLX 纳入跟踪；保留全部 9 个控件。`NX="1946"` 保留真实生成器来源，需 2512 Styler 验证另存，不能仅把数字改成 2512 |
 | `UIscripts.cs` | 已弃用 Show 改 Launch；检查 Ok 返回值；只在本次 OK 成功后保存配置；Dispose 对话框后运行；Apply 只验证，Cancel 不执行；释放 PropertyList；按 DLL 所在目录优先寻找配套 DLX |
 | `TraversalConfig.cs`、`ExportUtilities.cs` | 输入验证、空白过滤、中文 ACS/WCS 映射；`maxDepth` 默认 5；CSV 引号转义/固定小数点；安全且防冲突的 Windows 文件名；旧隔离配置仅保留 false 兼容；新增目标自身 ACS 的实例旋转补偿 |
 | `AssemblyTraverser.cs`、`NxGeometry.cs` | 新建每次运行目录；按需加载并检查/释放状态；检查 OpenComponentStatus；跳过抑制项；相同原型只处理一次；匹配装配后不单独导出后代；按稳定部件路径去重；两种导出均不强制完整加载；截图与测量共用原装配上下文；节点 finally 清理临时部件；事务独立捕获错误；防止重入 |
@@ -170,14 +181,14 @@
 
 1. 记录实际 NX 2512 maintenance build、Teamcenter 版本、NX 启动方式、VS/MSBuild 版本。确认运行中的 NX 与引用 DLL 来自同一 2512 安装。
 2. 默认使用 Visual Studio 2022（或支持 C# 7.3、MSBuild 15.8+ 的 VS / Build Tools）和 **.NET Framework 4.8 Developer/Targeting Pack**。若显式试编译 v4.7.2，则需要对应 4.7.2 开发包。本插件不使用 net8/managed_core。只有运行库并不代表安装了开发引用包。
-3. 使用 **NX 2512 Block UI Styler** 打开 `ClassLibrary1.dlx`。确认中文标签、9 个 ID、八个英文视角条目、多选视角和 OK/Cancel。若工具要求升级另存，执行后将修改的 DLX 纳入回传文件；不要生成模板覆盖 `UIscripts.cs`。XML 能解析不代表原生 Styler 验证通过。
+3. 使用 **NX 2512 Block UI Styler** 打开 `NX_Traverser.dlx`。确认中文标签、9 个 ID、八个英文视角条目、多选视角和 OK/Cancel。若工具要求升级另存，执行后将修改的 DLX 纳入回传文件；不要生成模板覆盖 `UIscripts.cs`。XML 能解析不代表原生 Styler 验证通过。
 4. 编译，安装路径以本机实际位置为准：
 
 ```powershell
 .\scripts\build.ps1 -NXInstallDir 'C:\Program Files\Siemens\NX2512' -Configuration Release
 ```
 
-默认输出为 `bin/Release/v4.8/NX_Traverser.dll` 与 `ClassLibrary1.dlx`，以及 PDB；v4.7.2 输出在 `bin/Release/v4.7.2/`，避免两种目标产物混用。`artifacts/build-Release-v4.8.binlog`（或 v4.7.2 对应日志）留在本地。目录内不应有任何 `NXOpen*.dll` 或 `ManagedLoader.dll`。记录全部警告，特别是 Obsolete、引用版本和平台警告；发现 API 不符时先查本机官方 XML 文档/2512 .NET Reference，再修代码，不使用反射猜测补丁。
+默认输出为 `bin/Release/v4.8/NX_Traverser.dll` 与 `NX_Traverser.dlx`，以及 PDB；v4.7.2 输出在 `bin/Release/v4.7.2/`，避免两种目标产物混用。`artifacts/build-Release-v4.8.binlog`（或 v4.7.2 对应日志）留在本地。目录内不应有任何 `NXOpen*.dll` 或 `ManagedLoader.dll`。记录全部警告，特别是 Obsolete、引用版本和平台警告；发现 API 不符时先查本机官方 XML 文档/2512 .NET Reference，再修代码，不使用反射猜测补丁。
 
 5. 对无 NX Open Author 许可的使用者，应按站点授权方式签名。官方签名资源已加入项目，用 2512 安装中的工具（先在本机检查帮助/参数）：
 

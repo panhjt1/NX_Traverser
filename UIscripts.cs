@@ -16,8 +16,8 @@ public sealed class NX_Traverser : IDisposable
     {
         _ui = UI.GetUI();
         string directory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-        string localDlx = Path.Combine(directory ?? string.Empty, "ClassLibrary1.dlx");
-        _dialog = _ui.CreateDialog(File.Exists(localDlx) ? localDlx : "ClassLibrary1.dlx");
+        string localDlx = Path.Combine(directory ?? string.Empty, "NX_Traverser.dlx");
+        _dialog = _ui.CreateDialog(File.Exists(localDlx) ? localDlx : "NX_Traverser.dlx");
         _dialog.AddApplyHandler(apply_cb);
         _dialog.AddOkHandler(ok_cb);
         _dialog.AddInitializeHandler(initialize_cb);
