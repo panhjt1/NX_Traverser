@@ -13,6 +13,7 @@ internal sealed class NxPartResources : IDisposable
     private readonly Dictionary<Tag, bool> _initialModified = new Dictionary<Tag, bool>();
     private readonly Dictionary<Tag, PartLoadState> _initialLoadState = new Dictionary<Tag, PartLoadState>();
     private bool _needsSweep;
+    public bool CleanupFailed { get; private set; }
 
     public NxPartResources(Session session)
     {
@@ -138,6 +139,7 @@ internal sealed class NxPartResources : IDisposable
         LogMemory(stage, closed);
         if (!ok)
         {
+            CleanupFailed = true;
             AssemblyTraverser.RequestStop();
             RunLog.Write("[STOP] 部件未能释放，停止继续加载以免内存持续增长。");
         }

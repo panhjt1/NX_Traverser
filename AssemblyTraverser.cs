@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using NXOpen;
@@ -8,10 +9,19 @@ using NXOpen.UF;
 
 public sealed class AssemblyTraverser
 {
+    private sealed class TransactionTotals
+    {
+        public int Succeeded, Failed, Canceled;
+        public bool FinishFailed;
+    }
     private static int _running;
     public static volatile bool StopRequested;
     private readonly TraversalConfig _config;
     private readonly List<ITransactionHandler> _handlers;
+    private readonly List<TransactionTotals> _totals = new List<TransactionTotals>();
+    private readonly List<string> _failureSummary = new List<string>();
+    private const int FailureSummaryLimit = 10;
+    private bool _cleanupFailureReported;
     private readonly HashSet<string> _processed = new HashSet<string>(StringComparer.Ordinal);
     private NxPartResources _resources;
     private int _completed, _failed, _skipped;
@@ -20,6 +30,7 @@ public sealed class AssemblyTraverser
     {
         _config = config;
         _handlers = handlers;
+        foreach (var handler in handlers) _totals.Add(new TransactionTotals());
     }
 
     // Default composition only. No transaction-specific decisions in traversal.
@@ -75,16 +86,24 @@ public sealed class AssemblyTraverser
     private void FinishHandlers()
     {
         var errors = new List<KeyValuePair<string, Exception>>();
-        foreach (ITransactionHandler handler in _handlers)
+        var records = new List<string>();
+        for (int i = 0; i < _handlers.Count; ++i)
         {
+            ITransactionHandler handler = _handlers[i];
+            var timer = Stopwatch.StartNew();
             try { handler.Finish(); }
             catch (Exception ex)
             {
                 ++_failed;
+                _totals[i].FinishFailed = true;
+                RememberFailure("事务 " + (i + 1) + " " + handler.GetType().Name + " 收尾", ex.Message);
                 errors.Add(new KeyValuePair<string, Exception>("Finish " + handler.GetType().Name, ex));
             }
+            records.Add("[Finish result] #" + (i + 1) + " " + handler.GetType().Name +
+                " Success=" + !_totals[i].FinishFailed + " ElapsedMs=" + timer.ElapsedMilliseconds);
         }
         // Even a log I/O failure must not prevent another handler's cleanup.
+        foreach (string record in records) RunLog.Write(record);
         foreach (var error in errors) RunLog.Error(error.Key, error.Value);
     }
 
@@ -94,6 +113,7 @@ public sealed class AssemblyTraverser
     {
         Session session = null;
         RunLog log = null;
+        var timer = Stopwatch.StartNew();
         try
         {
             session = Session.GetSession();
@@ -109,6 +129,10 @@ public sealed class AssemblyTraverser
             log = new RunLog(session, output);
             RunLog.Write("输出目录: " + output);
             RunLog.WriteBuildIdentity();
+            RunLog.Write("[Configuration] MaxDepth=" + _config.maxDepth + " CoordinateMode=" + _config.coordinateSelection +
+                " NamePatterns=" + string.Join(" | ", _config.namePatterns) + " IdPatterns=" + string.Join(" | ", _config.idPatterns));
+            RunLog.Write("[Root] " + rootPart.FullPath + " Units=" + rootPart.PartUnits +
+                " State=" + rootPart.PartLoadState + " ReadOnly=" + rootPart.IsReadOnly + " Modified=" + rootPart.IsModified);
             RunLog.Write("每个匹配原型导出一次；匹配装配后不再单独导出其后代。");
             RunLog.Write("逐节点释放临时加载部件；保留原有完整加载/已修改/活动部件。原有干净部分加载部件被本次使用后可卸载。");
             RunLog.Write("事务顺序: " + string.Join(" -> ", _handlers.ConvertAll(h => h.GetType().Name)));
@@ -120,12 +144,19 @@ public sealed class AssemblyTraverser
                 Traverse(root, rootPart.ComponentAssembly, session, 0, output);
             }
         }
+        catch (Exception ex)
+        {
+            HandleFailure("运行初始化或收尾", ex);
+            throw;
+        }
         finally
         {
             try
             {
                 // Single finalization site, including preflight/output failures.
                 FinishHandlers();
+                if (_resources != null && _resources.CleanupFailed && !_cleanupFailureReported)
+                    RecordCleanupFailure("最终部件释放");
                 if (session != null)
                 {
                     try { UFSession.GetUFSession().Ui.SetStatus(string.Empty); }
@@ -133,20 +164,65 @@ public sealed class AssemblyTraverser
                 }
                 RunLog.Write(string.Format("结束: 成功事务={0}, 失败={1}, 跳过={2}, 停止={3}",
                     _completed, _failed, _skipped, StopRequested));
+                if (log != null) ShowSummary(log, timer.Elapsed);
             }
             finally { if (log != null) log.Dispose(); }
         }
     }
 
-    private void HandleFailure(string stage, Exception error)
+    private bool HandleFailure(string stage, Exception error)
     {
         if (TraversalCancellation.IsCancellation(error))
         {
             RunLog.Write("[CANCELED] " + stage + ": " + error.Message);
-            return;
+            return true;
         }
         ++_failed;
+        RememberFailure(stage, error.Message);
         RunLog.Error(stage, error);
+        return false;
+    }
+
+    private void RememberFailure(string stage, string message)
+    {
+        // Bounded strings only: do not retain NX objects or a large assembly's
+        // complete result list in memory merely to display a final report.
+        if (_failureSummary.Count >= FailureSummaryLimit) return;
+        string line = (stage + ": " + message).Replace('\r', ' ').Replace('\n', ' ');
+        _failureSummary.Add(line.Length <= 240 ? line : line.Substring(0, 240) + "…");
+    }
+
+    private void RecordCleanupFailure(string stage)
+    {
+        ++_failed;
+        _cleanupFailureReported = true;
+        RememberFailure(stage, "部件释放失败，已停止；详情见日志。");
+    }
+
+    private void ShowSummary(RunLog log, TimeSpan elapsed)
+    {
+        var lines = new List<string> { "========== NX Traverser 执行结果 ==========",
+            "结果: " + (StopRequested ? "已停止" : _failed > 0 ? "完成（有失败）" : "完成") };
+        for (int i = 0; i < _handlers.Count; ++i)
+        {
+            ITransactionHandler handler = _handlers[i];
+            TransactionTotals total = _totals[i];
+            string name = handler is ImageExporter ? "截图" : handler is BoundingBoxExporter ? "XYZ 测量" : handler.GetType().Name;
+            string outcome = total.Failed > 0 || total.FinishFailed ? "有失败" : total.Canceled > 0 ? "已取消" :
+                total.Succeeded > 0 ? "成功" : "未执行";
+            lines.Add(string.Format("【{0}】事务 {1} {2}: 成功={3}, 失败={4}, 取消={5}, 收尾={6}",
+                outcome, i + 1, name, total.Succeeded, total.Failed, total.Canceled, total.FinishFailed ? "失败" : "成功"));
+        }
+        lines.Add(string.Format("总计: 成功事务={0}, 失败={1}, 跳过节点={2}, 停止={3}, 耗时={4:F1}秒",
+            _completed, _failed, _skipped, StopRequested, elapsed.TotalSeconds));
+        if (_failureSummary.Count > 0)
+        {
+            lines.Add("失败摘要（最多 " + FailureSummaryLimit + " 条，完整明细见日志）:");
+            foreach (string failure in _failureSummary) lines.Add("  " + failure);
+        }
+        lines.Add("输出目录: " + Path.GetDirectoryName(log.FilePath));
+        lines.Add("详细日志: " + log.FilePath);
+        log.ShowSummary(lines);
     }
 
     private void ProcessTarget(Component comp, Part part, Session session, string output, string id, string name)
@@ -155,17 +231,31 @@ public sealed class AssemblyTraverser
         var context = new TransactionContext(session, comp, part, output, id, name);
         try
         {
-            foreach (ITransactionHandler handler in _handlers)
+            for (int i = 0; i < _handlers.Count; ++i)
             {
                 if (StopRequested) break;
+                ITransactionHandler handler = _handlers[i];
                 string stage = handler.GetType().Name + " " + id;
+                string outcome = "Failed";
+                var timer = Stopwatch.StartNew();
                 try
                 {
                     RunLog.Write("[Begin] " + stage);
                     context.Execute(handler);
                     ++_completed;
+                    ++_totals[i].Succeeded;
+                    outcome = "Succeeded";
                 }
-                catch (Exception ex) { HandleFailure(stage, ex); }
+                catch (Exception ex)
+                {
+                    if (HandleFailure(stage, ex)) { ++_totals[i].Canceled; outcome = "Canceled"; }
+                    else ++_totals[i].Failed;
+                }
+                finally
+                {
+                    RunLog.Write("[Transaction end] #" + (i + 1) + " " + stage + " Result=" + outcome +
+                        " ElapsedMs=" + timer.ElapsedMilliseconds);
+                }
             }
         }
         finally
@@ -185,10 +275,12 @@ public sealed class AssemblyTraverser
         if (StopRequested || comp == null || comp.Tag == Tag.Null) return;
         Tag componentTag = comp.Tag;
         Tag pinnedPart = Tag.Null;
+        var timer = Stopwatch.StartNew();
         try
         {
             TraversalCancellation.Checkpoint();
-            if (comp.IsSuppressed) { ++_skipped; return; }
+            RunLog.Write("[Traverse begin] level=" + level + " tag=" + componentTag);
+            if (comp.IsSuppressed) { ++_skipped; RunLog.Write("[Skip suppressed] tag=" + componentTag); return; }
             Part part = NxGeometry.EnsurePrototype(comp, assembly);
             _resources.Pin(part);
             pinnedPart = part.Tag;
@@ -218,6 +310,7 @@ public sealed class AssemblyTraverser
             }
             else if (children.Length > 0 && level < _config.maxDepth)
             {
+                RunLog.Write("[Expand] " + id + " Name=" + name + " Children=" + children.Length + " level=" + level);
                 foreach (Component child in children)
                 {
                     if (StopRequested) break;
@@ -238,7 +331,9 @@ public sealed class AssemblyTraverser
         {
             if (pinnedPart != Tag.Null) _resources.Unpin(pinnedPart);
             // Runs after context restoration, including failed loads/exports.
-            if (!_resources.ReleaseUnused("level=" + level + " component=" + componentTag)) ++_failed;
+            if (!_resources.ReleaseUnused("level=" + level + " component=" + componentTag))
+                RecordCleanupFailure("部件释放 level=" + level + " component=" + componentTag);
+            RunLog.Write("[Traverse end] level=" + level + " tag=" + componentTag + " ElapsedMs=" + timer.ElapsedMilliseconds);
         }
     }
 }

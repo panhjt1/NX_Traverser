@@ -1,6 +1,6 @@
 # 本地 agent：NX 2512 编译、验收与部署提示词
 
-更新时间：2026-11-04。目标分支：`fix/nx2512-teamcenter-readonly`；修改基线：`707ecea`。这是本仓库的持续交接文档，后续每次代码、DLX 或构建配置变更都必须同步维护。
+更新时间：2026-11-04。目标分支：`fix/nx2512-teamcenter-readonly`；修改基线：`7703dd7`。这是本仓库的持续交接文档，后续每次代码、DLX 或构建配置变更都必须同步维护。
 
 ## 任务与边界
 
@@ -18,7 +18,29 @@
 4. 在含 `NX_Traverser.csproj` 的解压目录中执行下方构建命令。构建脚本不调用 Git，也不自动下载依赖；NX 引用、MSBuild 和相应 Targeting Pack 需由本机提供。
 5. 如需额外开发包，通过可联网浏览器取得安装包/官方引用包后按公司允许的方式传入本地，不假设本地 agent 能执行在线安装或 NuGet 还原。
 
-## 本次更新：只拥有测量坐标系，不拥有其底层矩阵
+## 本次更新：详细日志写文件，信息窗口只显示结束汇总
+
+用户要求参照原版简洁输出，信息窗口只在结束时说明执行了哪些事务、成功还是失败。此次只调整日志与主循环统计，不改截图/XYZ 的原装配路线、辅助对象只隐藏边界、测量临时 CSYS 所有权、部件卸载和取消规则；仍保持 `Process(TransactionContext)` + `Finish()` 标准事务接口。
+
+- `RunLog.Write` / `context.Log` 的进度、逐实体查询、NX 调用、内存与清理记录全部只写 `Traversal.log`，逐行自动刷新；运行中不再打开或逐行写信息窗口。文件增加配置、根部件状态、节点/事务耗时、事务结果、Finish 结果，以及失败 NX 调用的完整异常链。原有 Build/MVID、Assembly 路径和具体对象状态继续保留。
+- `AssemblyTraverser` 统一统计每个已登记事务实例的成功/失败/取消次数，最后在全部 Finish、显示恢复、部件释放之后发布一次汇总。即使两个扩展事务类型相同，也按登记序号分别统计；事务自身无需新增结果上报接口。
+- 汇总列出 XYZ/截图/自定义事务的结果、Finish 收尾结果、全局失败/跳过节点/停止状态和耗时。取消前未进入 Process 的事务显示“未执行”；未知的后续节点不虚构数量。总失败数也包括加载、恢复、卸载和 Finish 失败，因此不一定等于各事务 Process 失败数相加。
+- 信息窗口最多保留 10 条失败摘要，每条最多 240 字符加省略号并压平换行，避免大装配再次刷屏；完整错误和堆栈只在文件中。汇总末尾提供输出目录和完整日志路径，同样写入文件 `[Summary]`。正常错误仍按原策略继续，真正清理失败仍停止。
+- 自定义事务统一用 `context.Log/NxCall` 写明细，不直接向 ListingWindow 输出过程。`RunLog` 仍只负责记录，取消判断留在 `TraversalCancellation`，结果统计和显示留在主循环。
+
+当前 Build 标识为 **`nx2512-file-log-summary-20261104`**；以下历史章节中的旧标识只用于辨别旧包。
+
+本地 agent 本次任务：
+
+1. 新 ZIP 独立解压、保留本地修改，全量编译并按原方式签名，可继续显式 v4.7.2；此改动没有新增 Siemens API。确认输出目录 `Traversal.log` 开头的 Build/MVID 和 Assembly 路径是新 DLL。
+2. 分别运行单独截图、单独 XYZ、组合。运行中信息窗口不应新增逐实体/NX 调用记录；停止控制窗口仍可用。成功、失败或取消后，应只追加一份结束汇总，并且在 Finish/恢复/卸载完成之后才出现。
+3. 核对成功数量、实际 CSV/PNG 与事务结果；普通测量或截图失败应在对应事务失败数和失败摘要中体现。仅成功进入 Process 的调用才计成功；未执行不应冒充成功。Finish 失败要单列为“收尾=失败”，不得仅凭 Process 成功判定整轮正常完成。
+4. 用独立停止按钮取消：后续模块/目标不运行，清理仍执行，最终“停止=True”。大装配或多处失败时信息窗口应保持简短，完整明细在日志内；回传日志从 Build 到最终 Summary，不再依赖复制信息窗口的过程文本。
+5. 继续验收下节 `7703dd7` 的测量 CSYS 所有权修复与辅助对象恢复；本次日志改动不代表此前原生问题已实机验收通过。
+
+云端验证：**290 项离线断言通过**。新增信息窗口运行中保持安静、所有 Finish 之后才汇总、同类型事务分别统计、成功/失败/取消/未执行/收尾失败，以及 27 个失败目标的 10 条摘要上限和完整文件日志检查。net472 引用编译、24 个 C# 文件的 C# 7.3 语法检查、DLX/XML 检查通过。没有 Siemens SDK/NX 实机，未验证原生信息窗口显示时机和 Teamcenter 行为。
+
+## 此前更新：只拥有测量坐标系，不拥有其底层矩阵
 
 用户 12:01 的实机日志已明确：55 个实体查询完成，本次临时坐标系 `176788` 从 Alive(3) 变为 Deleted(0)，随后矩阵 `63938` 是 Condemned(2)，上一版因此错误停止。问题是把方向矩阵当成插件独占、必须删除的资源。`Condemned` 不能证明本次临时坐标系未清理，也不能据此操作该矩阵。上一版的状态校验仍建立在错误的矩阵所有权假设上，已撤掉这条路径。
 
@@ -126,7 +148,7 @@
 | `ImageExporter.cs`、`NxAssemblyExportContext.cs`、`NxViewState.cs` | 共用原装配显示范围；截图临时隐藏辅助对象，恢复 blank/相机/坐标轴；恢复失败停止并保留部件 |
 | `BoundingBoxExporter.cs`、`BoundingBoxMath.cs` | 原装配 occurrence 精确测量，目标 ACS/WCS 临时坐标系和单位换算；范围与显示实体对应；临时对象 finally 清理，失败不写不完整 CSV |
 | `TraversalCancellation.cs`、`TraversalStopWindow.cs` | 独立停止按钮与原生未消耗取消信号；整轮停止锁存，恢复/释放不中断，窗口线程退出后卸载 |
-| `RunLog.cs` | 只记录日志；取消检查由 TraversalCancellation 管理，保留成对的 NX 调用 begin/end、编号、完成状态和耗时；`Traversal.log` 同步 Listing Window，含阶段、只读/修改状态、NX 错误码；检测加载后新增修改标记；不清除修改标记 |
+| `RunLog.cs` | 详细进度和完整异常仅写自动刷新的 `Traversal.log`，信息窗口只显示主循环生成的结束汇总；保留成对 NX 调用 begin/end、编号、完成状态和耗时；取消检查由 TraversalCancellation 管理，不清除修改标记 |
 | `NX_Traverser.csproj`、`scripts/build.ps1` | 默认 net48 / x64，新增显式 v4.7.2 兼容编译参数；使用当前安装的 NXBIN/managed；Siemens 引用 Copy Local=false；嵌入本机 NXSigningResource.res；输出按框架隔离的 DLL/DLX、构建日志和 SHA256 |
 | `tests/` | 独立 C# 核心回归和 XML/控件一致性验证；PartResourceTests 和 ImageViewTests 使用明确的测试替身验证资源管理器、显示上下文和截图恢复控制流；不是 NX SDK，不验证 Siemens ABI/API、真实 PNG 或弹窗 |
 
@@ -228,7 +250,7 @@ dotnet run --project .\tests\CoreTests.csproj -c Release
 
 ## 当前已验证及未验证
 
-- 云端 **277 项独立 C# 断言通过**：新增自定义事务注册/顺序、共享上下文、元数据事务不准备视图、每事务画面恢复、Finish 生命周期、上下文违规停止、参数验证及重复视角去重；新增真实 AssemblyTraverser/TransactionContext/RunLog/取消监控的整轮中断、取消后恢复卸载、正常错误继续、后续模块/视角/组件跳过和新一轮重置；另外保留数学/文本、所有权和清理、原装配上下文、实际 BoundingBoxExporter 的实例筛选/ACS/WCS/单位换算/失败清理、辅助对象隐藏与恢复、真实 NxGeometry 的部分加载选择、装配内显示状态恢复、构造/导出/恢复失败、取消、无输出文件、空画面，以及目标自身 ACS 的数学与截图调用补偿检查。
+- 云端 **290 项独立 C# 断言通过**：覆盖文件日志与结束汇总分离、结果分类与摘要上限、自定义事务注册/顺序、共享上下文、元数据事务不准备视图、每事务画面恢复、Finish 生命周期、上下文违规停止、参数验证及重复视角去重；覆盖真实 AssemblyTraverser/TransactionContext/RunLog/取消监控的整轮中断、取消后恢复卸载、正常错误继续、后续模块/视角/组件跳过和新一轮重置；另外保留数学/文本、所有权和清理、原装配上下文、实际 BoundingBoxExporter 的实例筛选/ACS/WCS/单位换算/失败清理、辅助对象隐藏与恢复、真实 NxGeometry 的部分加载选择、装配内显示状态恢复、构造/导出/恢复失败、取消、无输出文件、空画面，以及目标自身 ACS 的数学与截图调用补偿检查。
 - 测试使用 .NET 8.0.427 SDK 的 Roslyn 编译并执行；NX 相关代码与显式测试替身组合，生成的是假文件，不验证 Siemens API 签名、真实 PNG、窗口或弹窗。
 - `python tests/validate_dlx.py`、`git diff --check` 通过；18 个插件源文件及 6 个测试源文件通过 C# 7.3 语法解析，这不包含 NX SDK 类型检查。
 - 同一测试程序使用 Microsoft 官方 net472 1.0.3 引用程序集编译通过；真实停止窗口源码也用这些引用及 System.Windows.Forms/System.Drawing 单独编译通过，未在 Linux 运行 Windows UI；未在 Framework 4.7.2 运行，也未编译完整 NX 插件。此前已核对默认 v4.8、显式 v4.7.2 及独立输出目录，本次没有改构建目标。

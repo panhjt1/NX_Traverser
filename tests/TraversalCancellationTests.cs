@@ -151,7 +151,8 @@ internal static class TraversalCancellationTests
             UFSession.Instance.Modl.AfterQuery = () => UFSession.Instance.Abort.Flag = true;
             AssemblyTraverser.Run(Config(output, true));
             Check(session.LastImageBuilder == null && firstPart.Closed, "Native measurement cancel skips image handler and cleans target");
-            Check(session.ListingWindow.Lines.Exists(x => x.Contains("[CANCELED] BoundingBoxExporter")), "Native cancel has explicit task cancellation log");
+            Check(TransactionContractTests.ReadRunLog(session).Contains("[CANCELED] BoundingBoxExporter"),
+                "Native cancel has explicit task cancellation evidence in the file log");
             string logOutput = session.ListingWindow.Lines.Find(x => x.Contains("输出目录: "));
             string directory = logOutput.Substring(logOutput.IndexOf("输出目录: ", StringComparison.Ordinal) + "输出目录: ".Length);
             Check(!File.Exists(Path.Combine(directory, "BoundingBoxResult.csv")), "No dimension row after canceled exact query");

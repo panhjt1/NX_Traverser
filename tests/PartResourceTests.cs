@@ -135,7 +135,8 @@ namespace NXOpen
     public sealed class ListingWindow
     {
         public readonly List<string> Lines = new List<string>();
-        public void Open() { }
+        public int Opens;
+        public void Open() { ++Opens; }
         public void WriteLine(string line) { Lines.Add(line); }
     }
     public class NXException : Exception
