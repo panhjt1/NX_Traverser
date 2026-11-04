@@ -63,21 +63,20 @@ internal static class NxGeometry
     }
 
     // Screenshots need display data, not feature history or exact body queries.
-    // Visit all unsuppressed descendants so an unloaded branch is not silently
-    // omitted, but never force LoadThisPartFully just to count screenshot bodies.
-    public static void PrepareDisplay(Part part)
+    // Visit visible, unsuppressed descendants without forcing full geometry.
+    // Hidden branches keep their original display and loading state.
+    public static void PrepareDisplay(Component target, ComponentAssembly assembly)
     {
-        Component root = part.ComponentAssembly.RootComponent;
-        if (root == null) return;
-        var ancestors = new HashSet<Tag> { part.Tag };
-        foreach (Component child in root.GetChildren()) PrepareDisplay(child, part.ComponentAssembly, ancestors, 0);
+        // Walk the selected occurrence, preserving its reference set and hidden
+        // descendants. Never load siblings just to manipulate their visibility.
+        PrepareDisplay(target, assembly, new HashSet<Tag>(), 0);
     }
 
     private static void PrepareDisplay(Component component, ComponentAssembly assembly,
         HashSet<Tag> ancestors, int depth)
     {
         if (AssemblyTraverser.StopRequested) throw new OperationCanceledException("截图加载已停止。");
-        if (component.IsSuppressed) return;
+        if (component.IsSuppressed || component.IsBlanked) return;
         if (depth > 100) throw new InvalidOperationException("装配结构超过 100 层。");
         Part part = EnsurePrototype(component, assembly, false);
         if (!ancestors.Add(part.Tag)) throw new InvalidOperationException("检测到循环装配引用。");

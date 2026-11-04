@@ -6,6 +6,7 @@ using NXOpen.Gateway;
 
 public sealed class ImageExporter : ITransactionHandler
 {
+    public bool RequiresPrototypeContext { get { return false; } }
     public enum SnapViewType { Trimetric, Isometric, Top, Front, Right, Back, Bottom, Left }
     private readonly SnapViewType[] _views;
 
@@ -20,17 +21,13 @@ public sealed class ImageExporter : ITransactionHandler
     {
         Part part = comp.Prototype as Part;
         if (part == null) throw new InvalidOperationException("无法取得截图原型。");
-        if (session.Parts.Display != part || session.Parts.Work != part)
-            throw new InvalidOperationException("截图必须在目标原型部件上下文中执行。");
-        RunLog.Write("[Load display] " + comp.DisplayName + "（后代仅请求显示数据，不逐个完整加载）");
-        NxGeometry.PrepareDisplay(part);
-        Capture(comp, part, part.ModelingViews.WorkView, session, outputFolder, descriptiveName);
+        using (var context = new NxAssemblyImageContext(session, comp))
+            Capture(comp, part, context, outputFolder, descriptiveName);
     }
 
-    private void Capture(Component comp, Part part, View view, Session session,
-        string outputFolder, string descriptiveName)
+    private void Capture(Component comp, Part part, NxAssemblyImageContext context, string outputFolder, string descriptiveName)
     {
-        var state = new NxViewState(view);
+        View view = context.View;
         string stem = ExportUtilities.SafeFileStem(descriptiveName, part.FullPath + "|" + descriptiveName);
         try
         {
@@ -43,7 +40,14 @@ public sealed class ImageExporter : ITransactionHandler
                 if (AssemblyTraverser.StopRequested) throw new OperationCanceledException("截图已停止。");
                 RunLog.Write("[Orient] " + comp.DisplayName + " " + selected);
                 view.Orient(ToCanned(selected), View.ScaleAdjustment.Fit);
-                session.DisplayManager.MakeUpToDate();
+                Matrix3x3 camera = view.Matrix;
+                double[,] matrix = ExportUtilities.PrototypeViewInAssembly(new double[,] {
+                    { camera.Xx, camera.Xy, camera.Xz }, { camera.Yx, camera.Yy, camera.Yz },
+                    { camera.Zx, camera.Zy, camera.Zz } }, context.Transform);
+                view.Orient(new Matrix3x3 { Xx = matrix[0, 0], Xy = matrix[0, 1], Xz = matrix[0, 2],
+                    Yx = matrix[1, 0], Yy = matrix[1, 1], Yz = matrix[1, 2],
+                    Zx = matrix[2, 0], Zy = matrix[2, 1], Zz = matrix[2, 2] });
+                RunLog.NxCall("Prepare assembly image frame", context.PrepareFrame);
                 string path = Path.Combine(outputFolder, stem + "_" + selected + ".png");
                 ExportImage(path);
                 if (!File.Exists(path) || new FileInfo(path).Length == 0)
@@ -54,12 +58,8 @@ public sealed class ImageExporter : ITransactionHandler
         finally
         {
             RunLog.Write("[Restore view] " + comp.DisplayName);
-            try { state.Restore(); }
-            catch
-            {
-                AssemblyTraverser.RequestStop();
-                throw;
-            }
+            // The outer context restores the visibility mask and pre-load camera
+            // together, even when preparation/capture/cancellation fails.
         }
     }
 
@@ -89,7 +89,7 @@ public sealed class ImageExporter : ITransactionHandler
             builder.FileName = path;
             builder.BackgroundOption = ImageExportBuilder.BackgroundOptions.Transparent;
             builder.EnhanceEdges = true;
-            RunLog.NxCall("Capture normal view", () => { builder.Commit(); });
+            RunLog.NxCall("Capture assembly view", () => { builder.Commit(); });
         }
         finally { builder.Destroy(); }
     }

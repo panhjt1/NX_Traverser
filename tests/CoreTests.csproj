@@ -11,6 +11,8 @@
     <Compile Include="PartResourceTests.cs" />
     <Compile Include="ImageViewTests.cs" />
     <Compile Include="../NxViewState.cs" Link="NxViewState.cs" />
+    <Compile Include="../NxAssemblyImageContext.cs" Link="NxAssemblyImageContext.cs" />
+    <Compile Include="../NxGeometry.cs" Link="NxGeometry.cs" />
     <Compile Include="../TraversalConfig.cs" Link="TraversalConfig.cs" />
     <Compile Include="../ImageExporter.cs" Link="ImageExporter.cs" />
     <Compile Include="../ITransactionHandler.cs" Link="ITransactionHandler.cs" />

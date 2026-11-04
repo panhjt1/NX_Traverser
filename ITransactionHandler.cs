@@ -6,6 +6,8 @@ using NXOpen.Assemblies;
 /// </summary>
 public interface ITransactionHandler
 {
+    bool RequiresPrototypeContext { get; }
+
     /// <summary>
     /// 对匹配的组件执行具体事务操作
     /// </summary>

@@ -45,6 +45,8 @@ public sealed class AssemblyTraverser
         Session session = Session.GetSession();
         Part rootPart = session.Parts.Work;
         if (rootPart == null) throw new InvalidOperationException("请先打开装配并设置工作部件。");
+        if (_config.flagImageOn && session.Parts.Display != rootPart)
+            throw new InvalidOperationException("装配内截图要求原装配同时为工作部件和显示部件，请先在 NX 中设置。");
         Component root = rootPart.ComponentAssembly.RootComponent;
         if (root == null) throw new InvalidOperationException("当前工作部件没有装配结构。");
         string output = Path.Combine(_config.filePath, "NX_Traverser_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") +
@@ -55,7 +57,7 @@ public sealed class AssemblyTraverser
             RunLog.Write("输出目录: " + output);
             RunLog.Write("每个匹配原型导出一次；匹配装配后不再单独导出其后代。坐标系=" + _config.coordinateSelection);
             RunLog.Write("逐节点释放临时加载部件；保留原有完整加载/已修改/活动部件。原有干净部分加载部件被本次使用后可卸载。");
-            if (_config.flagImageOn) RunLog.Write("截图模式=普通原型视图；隐藏 WCS/三重轴；不创建隔离窗口。只读激活提示尚未解决。");
+            if (_config.flagImageOn) RunLog.Write("截图模式=原装配内仅显示目标；图片方向=目标自身 ACS；隐藏 WCS/三重轴；不创建隔离窗口、不激活原型。");
             if (_config.flagXYZOn) RunLog.Write("精确测量仍需原型上下文，可能触发只读部件激活提示。");
             try
             {
@@ -113,25 +115,21 @@ public sealed class AssemblyTraverser
                 bool wasModified = part.IsModified;
                 try
                 {
-                    int completedInContext = 0;
-                    // Both exports use the same prototype; activate/restore only
-                    // once per matched part, including combined image + measure.
-                    using (var context = new NxPartContext(session, part))
+                    foreach (ITransactionHandler handler in _handlers)
                     {
-                        foreach (ITransactionHandler handler in _handlers)
+                        if (StopRequested) break;
+                        string stage = handler.GetType().Name + " " + id;
+                        try
                         {
-                            if (StopRequested) break;
-                            string stage = handler.GetType().Name + " " + id;
-                            try
-                            {
-                                RunLog.Write("[Begin] " + stage);
+                            RunLog.Write("[Begin] " + stage);
+                            // Exact measurement still needs the prototype. Images
+                            // operate in the restored original assembly throughout.
+                            using (var context = handler.RequiresPrototypeContext ? new NxPartContext(session, part) : null)
                                 handler.Process(comp, session, output, id + "_" + name);
-                                ++completedInContext;
-                            }
-                            catch (Exception ex) { ++_failed; RunLog.Error(stage, ex); }
+                            ++_completed;
                         }
+                        catch (Exception ex) { ++_failed; RunLog.Error(stage, ex); }
                     }
-                    _completed += completedInContext;
                 }
                 finally
                 {

@@ -201,6 +201,21 @@ namespace NXOpen
         public PartLoadState PartLoadState { get { CheckAlive(); return _state; } set { _state = value; } }
         public bool IsFullyLoaded { get { return PartLoadState == PartLoadState.FullyLoaded; } }
         public bool Closed, RefuseClose, ThrowOnClose, ThrowOnLoad;
+        public bool ThrowOnPartialLoad;
+        public PartLoadStatus LoadThisPartFully()
+        {
+            Owner.Calls.Add("load " + Name);
+            if (ThrowOnLoad) throw new InvalidOperationException("Simulated load failure");
+            PartLoadState = PartLoadState.FullyLoaded;
+            return new PartLoadStatus();
+        }
+        public PartLoadStatus LoadThisPartPartially()
+        {
+            Owner.Calls.Add("partial " + Name);
+            if (ThrowOnPartialLoad) throw new InvalidOperationException("Simulated partial load failure");
+            if (!IsFullyLoaded) PartLoadState = PartLoadState.PartiallyLoaded;
+            return new PartLoadStatus();
+        }
         public bool InactiveBeforeClose, InactiveAfterClose;
         public BasePart ReleaseWithClose;
         public void Close(CloseWholeTree tree, CloseModified modified, object responses)
@@ -225,6 +240,8 @@ namespace NXOpen
         public string FullPath { get { return Name; } }
         public ViewCollection Views;
         public ViewCollection ModelingViews { get { return Views; } }
+        public Assemblies.ComponentAssembly ComponentAssembly = new Assemblies.ComponentAssembly();
+        public readonly List<Body> Bodies = new List<Body>();
     }
     public sealed class PartCollection
     {
@@ -277,13 +294,26 @@ namespace NXOpen
 }
 namespace NXOpen.Assemblies
 {
-    public sealed class Component
+    public sealed class Component : DisplayableObject, IFitTo
     {
         public Component Parent;
-        public Part OwningPart;
         public object Prototype;
-        public Tag Tag;
         public string DisplayName = "test occurrence";
+        public bool IsSuppressed;
+        public readonly List<Component> Children = new List<Component>();
+        public Component[] GetChildren() { return Children.ToArray(); }
+        public NXObject FindOccurrence(NXObject proto) { throw new NotSupportedException("Not simulated by these tests"); }
+    }
+    public sealed class ComponentAssembly
+    {
+        public enum OpenOption { ComponentOnly }
+        public enum OpenComponentStatus { SuccessfullyOpened }
+        public Component RootComponent;
+        public PartLoadStatus OpenComponents(OpenOption option, Component[] components, out OpenComponentStatus[] status)
+        {
+            status = null;
+            throw new InvalidOperationException("Unexpected attempt to open an unloaded off-target component");
+        }
     }
 }
 internal static class AssemblyTraverser
@@ -297,16 +327,4 @@ internal static class RunLog
     public static void Write(string text) { }
     public static void Error(string stage, Exception error) { }
     public static void NxCall(string stage, Action action) { action(); }
-}
-// Simulate the outcome of the load adapter; actual geometry loading is NOT
-// validated by this double. NxPartContext itself is compiled from production.
-internal static class NxGeometry
-{
-    public static void PrepareDisplay(Part part) { }
-    public static void LoadFully(Part part)
-    {
-        part.Owner.Calls.Add("load " + part.Name);
-        if (part.ThrowOnLoad) throw new InvalidOperationException("Simulated load failure");
-        part.PartLoadState = PartLoadState.FullyLoaded;
-    }
 }
