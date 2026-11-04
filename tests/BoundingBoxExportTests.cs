@@ -5,6 +5,7 @@ using System.IO;
 using NXOpen;
 using NXOpen.Assemblies;
 using NXOpen.UF;
+using PartLoadState = NXOpen.PartLoadState;
 
 internal static class BoundingBoxExportTests
 {
@@ -361,6 +362,10 @@ namespace NXOpen.Utilities
 }
 namespace NXOpen.UF
 {
+    // The SDK exposes this name in both namespaces. Keep that ambiguity in
+    // the double so production imports must select NXOpen.PartLoadState.
+    public enum PartLoadState { }
+
     public class UFCsys
     {
         public double[] Origin,Axes,SourceOrigin,SourceAxes;

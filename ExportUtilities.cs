@@ -1,12 +1,48 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
 // Independent of NX so data handling can be regression tested without its SDK.
 public static class ExportUtilities
 {
+    public static string CreateRunDirectory(string root, DateTime startedAt)
+    {
+        string minute = startedAt.ToString("yyyyMMddHHmm", CultureInfo.InvariantCulture);
+        Directory.CreateDirectory(root);
+        // Claim the final name by moving a staging directory, without merging
+        // outputs from concurrent NX sessions. The log placeholder also makes
+        // the directory nonempty (Unix rename can replace an empty directory).
+        string staging = Path.Combine(root, ".NX_Traverser_" + Guid.NewGuid().ToString("N") + ".tmp");
+        Directory.CreateDirectory(staging);
+        try
+        {
+            using (File.Create(Path.Combine(staging, "Traversal.log"))) { }
+            for (int number = 1; ; ++number)
+            {
+                string name = minute + (number == 1 ? "" : "_" + number.ToString(CultureInfo.InvariantCulture));
+                string output = Path.Combine(root, name);
+                if (Directory.Exists(output) || File.Exists(output)) continue;
+                try { Directory.Move(staging, output); return output; }
+                catch (IOException)
+                {
+                    // Retry only a name collision, not permissions/disk errors.
+                    if (!Directory.Exists(output) && !File.Exists(output)) throw;
+                }
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(staging))
+            {
+                File.Delete(Path.Combine(staging, "Traversal.log"));
+                Directory.Delete(staging, false);
+            }
+        }
+    }
+
     // View matrices map model -> view; occurrence transforms map prototype ->
     // assembly (column-vector convention). C * inverse(R) keeps prototype views.
     public static double[,] PrototypeViewInAssembly(double[,] camera, double[,] occurrence)

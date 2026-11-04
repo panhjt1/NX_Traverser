@@ -11,7 +11,7 @@ Write-Host "编译目标: .NET Framework $TargetFrameworkVersion / x64"
 if ($TargetFrameworkVersion -eq 'v4.7.2') {
     Write-Host '正在尝试旧工程的 4.7.2 编译目标；仍使用 NX 2512 引用，并保留框架兼容性检查。'
 }
-foreach ($library in @('NXOpen.dll', 'NXOpenUI.dll', 'NXOpen.UF.dll')) {
+foreach ($library in @('NXOpen.dll', 'NXOpen.Utilities.dll', 'NXOpenUI.dll', 'NXOpen.UF.dll')) {
     $path = Join-Path $nxManaged $library
     if (-not (Test-Path -LiteralPath $path)) { throw "缺少 NX 2512 引用: $path" }
     $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($path)

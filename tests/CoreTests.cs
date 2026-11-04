@@ -1,5 +1,7 @@
 using System;
 using System.Globalization;
+using System.IO;
+using System.Threading.Tasks;
 
 internal static class CoreTests
 {
@@ -66,6 +68,7 @@ internal static class CoreTests
         Assert(first != second, "Sanitized names must not collide");
         Assert(first.IndexOf('/') < 0 && second.IndexOf(':') < 0, "Windows filename characters");
         Assert(ExportUtilities.SafeFileStem(new string('x', 300), "long").Length < 100, "Bound filename length");
+        OutputDirectoryRegression();
         LifetimeRegression();
         _checks += PartResourceTests.Run();
         _checks += ImageViewTests.Run() + BoundingBoxExportTests.Run() + TraversalCancellationTests.Run() + TransactionContractTests.Run();
@@ -105,5 +108,40 @@ internal static class CoreTests
         Assert(!lifetime.CanRelease("partial repeated"), "Released initial part needs a new touch");
         lifetime.Touch("partial repeated");
         Assert(lifetime.CanRelease("partial repeated"), "Repeated occurrence promotion can be released again");
+    }
+
+    private static void OutputDirectoryRegression()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "nx-output-path-tests-" + Guid.NewGuid().ToString("N"));
+        var minute = new DateTime(2026, 11, 4, 13, 0, 1);
+        CultureInfo culture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo("th-TH");
+            string first = ExportUtilities.CreateRunDirectory(root, minute);
+            File.WriteAllText(Path.Combine(first, "existing.txt"), "keep");
+            string second = ExportUtilities.CreateRunDirectory(root, minute.AddSeconds(45));
+            Assert(Path.GetFileName(first) == "202611041300" && Path.GetFileName(second) == "202611041300_2",
+                "Local start minute, invariant calendar and collision suffix");
+            File.WriteAllText(Path.Combine(root, "202611041300_3"), "existing file");
+            Assert(Path.GetFileName(ExportUtilities.CreateRunDirectory(root, minute)) == "202611041300_4",
+                "A conflicting file must be preserved and skipped");
+            Assert(File.ReadAllText(Path.Combine(first, "existing.txt")) == "keep" &&
+                File.ReadAllText(Path.Combine(root, "202611041300_3")) == "existing file",
+                "Existing exports and colliding files are never overwritten");
+            Assert(Path.GetFileName(ExportUtilities.CreateRunDirectory(root, minute.AddMinutes(1))) == "202611041301",
+                "A new minute starts with an unsuffixed name");
+            var paths = new string[8];
+            Parallel.For(0, paths.Length, i => paths[i] = ExportUtilities.CreateRunDirectory(root, minute.AddMinutes(2)));
+            Assert(new System.Collections.Generic.HashSet<string>(paths).Count == paths.Length,
+                "Concurrent runs never share an output directory");
+            Assert(Directory.GetDirectories(root, ".NX_Traverser_*.tmp").Length == 0,
+                "Successful allocation leaves only the timestamp directories");
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = culture;
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
     }
 }

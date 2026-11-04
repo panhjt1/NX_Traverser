@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using NXOpen;
 using NXOpen.Assemblies;
 using NXOpen.UF;
+using PartLoadState = NXOpen.PartLoadState;
 
 internal static class NxGeometry
 {
@@ -311,7 +312,7 @@ internal static class NxGeometry
             var body = NXOpen.Utilities.NXObjectManager.Get(tag) as Body;
             if (body == null) return "Metadata=not a Body";
             Component component = body.OwningComponent;
-            Part part = component == null ? body.OwningPart : component.Prototype as Part;
+            Part part = component == null ? body.OwningPart as Part : component.Prototype as Part;
             return "Component=" + (component == null ? "<work-part body>" : component.DisplayName + "(" + component.Tag + ")") +
                 " Part=" + (part == null ? "<unavailable>" : part.Name + " State=" + part.PartLoadState +
                     " ReadOnly=" + part.IsReadOnly + " Modified=" + part.IsModified);

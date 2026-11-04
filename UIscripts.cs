@@ -6,13 +6,13 @@ using NXOpen;
 using NXOpen.BlockStyler;
 
 // Hand-maintained controller. Generate Block UI Styler templates elsewhere.
-public sealed class ClassLibrary1 : IDisposable
+public sealed class NX_Traverser : IDisposable
 {
     private readonly UI _ui;
     private readonly BlockDialog _dialog;
     private TraversalConfig _acceptedConfig;
 
-    public ClassLibrary1()
+    public NX_Traverser()
     {
         _ui = UI.GetUI();
         string directory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
@@ -30,7 +30,7 @@ public sealed class ClassLibrary1 : IDisposable
         try
         {
             TraversalConfig config;
-            using (var controller = new ClassLibrary1())
+            using (var controller = new NX_Traverser())
             {
                 BlockDialog.DialogResponse response = controller._dialog.Launch();
                 config = response == BlockDialog.DialogResponse.Ok ? controller._acceptedConfig : null;

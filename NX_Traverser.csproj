@@ -29,6 +29,10 @@
       <HintPath>$(NXManagedDir)\NXOpen.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="NXOpen.Utilities">
+      <HintPath>$(NXManagedDir)\NXOpen.Utilities.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="NXOpenUI">
       <HintPath>$(NXManagedDir)\NXOpenUI.dll</HintPath>
       <Private>false</Private>
@@ -48,7 +52,7 @@
   <Target Name="ValidateNXInstallation" BeforeTargets="ResolveAssemblyReferences">
     <Error Condition="'$(TargetFrameworkVersion)' != 'v4.8' And '$(TargetFrameworkVersion)' != 'v4.7.2'" Text="本项目只提供 v4.8 和 v4.7.2 编译配置。" />
     <Error Condition="!Exists('$(NXManagedDir)\NXOpen.dll')" Text="指定 NX 2512 安装目录: /p:NXInstallDir=...；需要 NXBIN\managed\NXOpen.dll。" />
-    <Error Condition="!Exists('$(NXManagedDir)\NXOpenUI.dll') Or !Exists('$(NXManagedDir)\NXOpen.UF.dll')" Text="NX 2512 managed 引用不完整。请安装对应 NX Open 开发组件。" />
+    <Error Condition="!Exists('$(NXManagedDir)\NXOpen.Utilities.dll') Or !Exists('$(NXManagedDir)\NXOpenUI.dll') Or !Exists('$(NXManagedDir)\NXOpen.UF.dll')" Text="NX 2512 managed 引用不完整，需要 NXOpen.Utilities.dll、NXOpenUI.dll 和 NXOpen.UF.dll。请安装对应 NX Open 开发组件。" />
     <Error Condition="!Exists('$(NXInstallDir)\UGOPEN\NXSigningResource.res')" Text="缺少 NX 签名资源 UGOPEN\NXSigningResource.res；请安装对应 NX Open 开发组件。" />
   </Target>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

@@ -123,9 +123,7 @@ public sealed class AssemblyTraverser
                 throw new InvalidOperationException("装配内导出要求原装配同时为工作部件和显示部件，请先在 NX 中设置。");
             Component root = rootPart.ComponentAssembly.RootComponent;
             if (root == null) throw new InvalidOperationException("当前工作部件没有装配结构。");
-            string output = Path.Combine(_config.filePath, "NX_Traverser_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") +
-                "_" + Guid.NewGuid().ToString("N").Substring(0, 8));
-            Directory.CreateDirectory(output);
+            string output = ExportUtilities.CreateRunDirectory(_config.filePath, DateTime.Now);
             log = new RunLog(session, output);
             RunLog.Write("输出目录: " + output);
             RunLog.WriteBuildIdentity();

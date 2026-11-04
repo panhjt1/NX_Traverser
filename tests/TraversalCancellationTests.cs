@@ -6,6 +6,7 @@ using System.Threading;
 using NXOpen;
 using NXOpen.Assemblies;
 using NXOpen.UF;
+using PartLoadState = NXOpen.PartLoadState;
 
 internal static class TraversalCancellationTests
 {

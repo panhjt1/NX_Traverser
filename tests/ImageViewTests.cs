@@ -300,7 +300,7 @@ namespace NXOpen
         public enum AttributeType { String }
         public struct AttributeInformation { public string StringValue; }
         public Tag Tag;
-        public Part OwningPart;
+        public BasePart OwningPart;
         public Component OwningComponent;
     }
     public class DisplayableObject : NXObject

@@ -14,11 +14,11 @@
 .\scripts\build.ps1 -NXInstallDir 'C:\Program Files\Siemens\NX2512' -Configuration Release
 ```
 
-默认要求 VS 2022 / Build Tools 与 .NET Framework 4.8 Developer/Targeting Pack。复用原工程 4.7.2 目标时，可加 `-TargetFrameworkVersion v4.7.2`；需要对应开发包及支持 C# 7.3 的编译器。这个选项不改变 NX 2512 的运行环境要求；若 NX 引用要求更高框架，构建必须先解决该错误。项目引用本机 `NXBIN/managed` 中的 NXOpen、NXOpenUI 和 NXOpen.UF，并嵌入本机签名资源。不要混用 1946 或 `managed_core` DLL，不要随插件部署 Siemens DLL。
+默认要求 VS 2022 / Build Tools 与 .NET Framework 4.8 Developer/Targeting Pack。复用原工程 4.7.2 目标时，可加 `-TargetFrameworkVersion v4.7.2`；需要对应开发包及支持 C# 7.3 的编译器。这个选项不改变 NX 2512 的运行环境要求；若 NX 引用要求更高框架，构建必须先解决该错误。项目引用本机 `NXBIN/managed` 中的 NXOpen、NXOpen.Utilities、NXOpenUI 和 NXOpen.UF，并嵌入本机签名资源。不要混用 1946 或 `managed_core` DLL，不要随插件部署 Siemens DLL。
 
 默认产物位于 `bin/Release/v4.8/`；显式选择 4.7.2 时位于 `bin/Release/v4.7.2/`。
 
-将编译并按站点要求签名的 `NX_Traverser.dll` 与 `ClassLibrary1.dlx` 放在一起，从 NX 的“文件 → 执行 → NX Open/Designcenter Open”加载 DLL。入口为 `ClassLibrary1.Main`。本项目是多文件类库，不应把 `UIscripts.cs` 单独作为 Journal 播放。
+将编译并按站点要求签名的 `NX_Traverser.dll` 与 `ClassLibrary1.dlx` 放在一起，从 NX 的“文件 → 执行 → NX Open/Designcenter Open”加载 DLL。程序集和入口类统一为 `NX_Traverser`，入口为 `NX_Traverser.Main`，卸载钩子为该类的 `GetUnloadOption`；原 DLX 文件名保留。本项目是多文件类库，不应把 `UIscripts.cs` 单独作为 Journal 播放。旧菜单或调用代码若显式指定 `ClassLibrary1.Main`，需同步改成新入口。
 
 DLX 已修复 XML 声明位置并保留原始控件 schema。其 `NX="1946"` 标记记录生成来源，不是运行时版本开关；请用 NX 2512 Block UI Styler 验证并按需另存。
 
@@ -31,7 +31,7 @@ DLX 已修复 XML 声明位置并保留原始控件 schema。其 `NX="1946"` 标
 - 截图在原装配现有视口中临时只显示目标实例，不激活原型、不创建隔离窗口；之后恢复原显示状态再卸载临时部件。按目标自身 ACS 补偿实例放置旋转，保持零件/子装配的标准视角，不依赖当前 WCS。
 - 图片采用首次匹配实例当前参考集和隐藏状态。要求原装配同时为 work/display、普通单建模视口、非爆炸视图；镜像、剪切、非均匀缩放拒绝。实际方向、内容和显示恢复仍需本地验证。
 - 包围盒在原装配中查询实体实例，方向按**目标自身 ACS/WCS**。仅计入当前显示范围的模型实体，排除隐藏/抑制、参考集外和隐藏图层对象；未隐藏但被其他实体遮挡的对象仍计入。截图与 XYZ 共用一次显示范围准备和恢复。没有精确实体或任一查询失败时，测量报错且不写不完整尺寸，不激活原型回退。结果单位为目标部件单位，CSV 范围为 `DisplayedOccurrenceBodies`。
-- 每次新建 `NX_Traverser_日期_时间_随机后缀` 子目录，含 PNG、`BoundingBoxResult.csv`（有成功测量时）及 `Traversal.log`，保留以前结果。
+- 每次在所选目录下新建按运行电脑本地开始时间命名的 `yyyyMMddHHmm` 子目录，例如 `202611041300`（2026 年 11 月 4 日 13:00）。同一分钟重名时依次用 `_2`、`_3` 等后缀，已有文件/目录都避开，不覆盖旧结果。目录含 PNG、`BoundingBoxResult.csv`（有成功测量时）及 `Traversal.log`；最终汇总显示实际路径。
 - 信息窗口只在结束时汇总各事务的成功/失败/取消次数、收尾结果、跳过/停止状态，并附最多 10 条失败摘要和日志路径。所有逐节点、逐实体、NX 调用和内存细节只写 `Traversal.log`，逐行落盘，保留完整异常链和各阶段耗时；排障请提供该文件。开头的 Build/MVID 和 Assembly 路径可确认实际加载的 DLL。
 - CSV 首五列为 `零件名,ID,x,y,z`，后接 `单位,坐标系,范围,实体数`；使用 UTF-8 BOM、固定小数点及标准引号转义。
 

@@ -4,6 +4,7 @@ using System.IO;
 using NXOpen;
 using NXOpen.Assemblies;
 using NXOpen.UF;
+using PartLoadState = NXOpen.PartLoadState;
 
 // Direct exporter tests still go through the same driver-owned context boundary.
 internal sealed class TransactionTestScope : IDisposable

@@ -22,5 +22,16 @@ match = re.search(r"enum SnapViewType\s*\{([^}]+)\}", source)
 assert actual == [value.strip() for value in match[1].split(",")], "DLX/C# view mismatch"
 coordinates = root.find(".//item[@id='coordinateSelection']/PropertyList/Property[@sname='Value']")
 assert [entry.attrib["name"] for entry in coordinates] == ["绝对坐标系", "工作坐标系"]
-ET.parse(repo / "NX_Traverser.csproj")
-print("PASS: DLX XML, block IDs, navigation, view/coordinate mappings, project XML")
+project = ET.parse(repo / "NX_Traverser.csproj")
+ns = {"m": "http://schemas.microsoft.com/developer/msbuild/2003"}
+for name in ("NXOpen", "NXOpen.Utilities", "NXOpenUI", "NXOpen.UF"):
+    reference = project.find(f".//m:Reference[@Include='{name}']", ns)
+    assert reference is not None, f"Missing SDK reference: {name}"
+    assert reference.find("m:HintPath", ns).text == f"$(NXManagedDir)\\{name}.dll"
+    assert reference.find("m:Private", ns).text == "false", "SDK assemblies must not be deployed"
+assembly = project.find(".//m:AssemblyName", ns).text
+controller = (repo / "UIscripts.cs").read_text(encoding="utf-8")
+assert re.search(rf"public sealed class {re.escape(assembly)}\s*:", controller), "Entry class/assembly mismatch"
+assert "public static void Main()" in controller, "Missing plugin entry"
+assert "public static int GetUnloadOption(string arg)" in controller, "Missing unload hook"
+print("PASS: DLX XML/mappings, project SDK references and entry-name consistency (not SDK compilation)")
