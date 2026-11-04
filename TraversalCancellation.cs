@@ -69,6 +69,25 @@ internal sealed class TraversalCancellation : IDisposable
         return _current != null && _current.PollNativeAbort();
     }
 
+    public static void NxCall(string stage, Action action, bool cancelable = true)
+    {
+        RunLog.NxCall(stage, () =>
+        {
+            try
+            {
+                if (cancelable) Checkpoint();
+                action();
+                if (cancelable) Checkpoint();
+            }
+            catch (Exception ex)
+            {
+                if (cancelable && IsCancellation(ex))
+                    throw new OperationCanceledException("用户取消: " + stage, ex);
+                throw;
+            }
+        });
+    }
+
     public void Dispose()
     {
         try { PollNativeAbort(); }

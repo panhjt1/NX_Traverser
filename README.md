@@ -41,6 +41,50 @@ DLX 已修复 XML 声明位置并保留原始控件 schema。其 `NX="1946"` 标
 
 关闭后重新枚举会话，不访问被父部件关闭连带失效的旧对象；只有确认目标已离开会话才容忍关闭时的 3615013。截图恢复 blank 状态、相机和坐标轴开关并核验原 work/display/视口后才卸载；恢复失败则停止并保留当前加载集合。Restore visibility 可能隐式加载显示数据，需结合日志检查峰值，不能只看最后已加载数。没有验证到保证所有 NX/Teamcenter 回调无弹窗的公开开关。日志保留成对 begin/end；不删除用户撤销记录。具体 API 依据见 [NX2512_API_REVIEW.md](docs/NX2512_API_REVIEW.md)。
 
+## 主循环与事务规范
+
+保留“主循环 + `ITransactionHandler` 事务列表”的组织方式。事务统一实现 `Process(TransactionContext context)` 和 `Finish()`，主循环按登记顺序执行。
+
+| 位置 | 负责什么 |
+|---|---|
+| `AssemblyTraverser` | 注册、筛选、递归、原型去重、逐事务异常/取消处理、成功计数、上下文生命周期、逐节点卸载、整轮 Finish |
+| `TransactionContext` | 借给事务的目标信息、输出目录/统一文件名、日志/取消入口和公共服务；同一目标共用一个实例 |
+| `NxAssemblyExportContext` | 按需准备原装配显示范围；视角、辅助对象及坐标轴处理；每个事务恢复画面，目标结束恢复分支显示 |
+| `NxGeometry` | 按需部分加载、显示实体枚举、ACS/WCS 变换、精确查询和临时测量对象清理 |
+| `ImageExporter` / `BoundingBoxExporter` | 分别组织视角并写 PNG、将测量结果写 CSV；只释放自己创建的 Builder/文件流 |
+| `TraversalCancellation` / `RunLog` | 前者处理停止和 NX 调用边界；后者只记录日志，不决定是否取消 |
+
+事务规范：
+
+1. 构造函数只验证/保存自身选项，不打开源部件或创建文件。`Process` 只处理传入目标，不递归、不自行筛选/去重、不创建或关闭公共上下文、不激活/关闭源部件。
+2. 读取 `context.Id/Name/TargetPart` 等输入；通过 `PrepareImageView`、`MeasureBoundingBox` 复用公共能力。显示服务按需初始化，所以只导出属性的事务不需要单建模视口，也不会为截图而隐藏分支。
+3. 事务内较长循环调用 `context.CheckCancellation()`；普通 NX 工作可用 `context.NxCall(stage, action)`。自己的 Builder 等资源用 `finally` 清理，清理不要经过会因取消而跳过的工作入口。不要吞掉异常后冒充成功。
+4. 主循环在每个事务返回/抛错后恢复经公共服务改变的画面，检查原 work/display/work component；同一目标的显示范围和加载保留给后续事务，最后统一恢复、卸载。恢复失败立即停止并保留部件。
+5. `Finish()` 在已接受的一轮任务结束时调用一次，包括取消、后续事务未执行、启动检查失败的情况；用于关闭整个运行期间的文件流/输出汇总。跨目标仅保存字符串、数值等结果，不缓存待卸载的 NX 对象或 `TransactionContext`。同一实例不能重复登记。
+
+默认 `Run(config)` 仍按 UI 配置登记 XYZ、截图。也可显式登记其他事务，不改遍历代码；此重载只读取公共筛选/输出/深度配置，各事务自行验证其构造参数：
+
+```csharp
+public sealed class NameLogger : ITransactionHandler
+{
+    public void Process(TransactionContext context)
+    {
+        context.Log(context.Id + ": " + context.Name);
+    }
+    public void Finish() { }
+}
+
+// 在 NX 主线程中调用；每轮传入新的事务实例。
+AssemblyTraverser.Run(new TraversalConfig { filePath = @"D:\output" },
+    new ITransactionHandler[] {
+        new NameLogger(),
+        new BoundingBoxExporter("ACS"),
+        new ImageExporter(new[] { ImageExporter.SnapViewType.Top })
+    });
+```
+
+旧扩展需改为上述 `Process(TransactionContext)` 签名并重新编译；删除的直接 `Process(Component, Session, ...)` 重载不再作为旁路入口。原 `NxAssemblyExportContext` 现在是内部实现，事务不拥有它的生命周期。
+
 ## 直接调用
 
 从已加载 NX 的程序中调用（所有 NX API 留在 NX 主线程）：

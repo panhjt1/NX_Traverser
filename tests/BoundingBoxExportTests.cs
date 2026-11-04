@@ -52,9 +52,7 @@ internal static class BoundingBoxExportTests
     }
     private static void Export(Component comp, Session session, string output, string mode)
     {
-        var exporter = new BoundingBoxExporter(mode);
-        try { exporter.Process(comp, session, output, "target"); }
-        finally { exporter.Finish(); }
+        TransactionTestScope.Run(new BoundingBoxExporter(mode), comp, session, output, "target");
     }
     private static string Row(string output) { return File.ReadAllLines(Path.Combine(output, "BoundingBoxResult.csv"))[1]; }
 
@@ -93,18 +91,18 @@ internal static class BoundingBoxExportTests
         root.Views.WorkView.Scene.Add(new Face { Tag=(Tag)3206, OwningComponent=comp,
             Body=(Body)root.Views.WorkView.Scene[0] });
         var exporter = new BoundingBoxExporter("ACS");
-        using (var context = new NxAssemblyExportContext(session, comp))
+        using (var context = new TransactionTestScope(session, comp, output, "target"))
         {
-            try { exporter.Process(context, output, "target"); } finally { exporter.Finish(); }
+            context.Process(exporter);
             Check(Row(output).Contains(",5.000,3.000,14.000,"), "Hidden/refset/layer excluded; occluded rear and child bodies included");
             Check(uf.Modl.Queried.Count==3 && !uf.Modl.Queried.Contains(outOfRefset.Tag), "Only occurrence member bodies queried");
             session.CaptureObserver = view => {
                 foreach (DisplayableObject aux in auxiliaries) Check(aux.IsBlanked, "Auxiliary object hidden at capture");
                 Check(!root.Views.WorkView.Scene[0].IsBlanked, "Face normalized to body and retained");
             };
-            new ImageExporter(new[] { ImageExporter.SnapViewType.Top }).Process(context, output, "clean");
-            Check(session.Calls.FindAll(c => c=="partial readonly prototype").Count==1,
-                "Combined export prepares target only once");
+            context.Process(new ImageExporter(new[] { ImageExporter.SnapViewType.Top }));
+            Check(session.Calls.FindAll(c => c=="partial readonly prototype").Count==0,
+                "Already-partially-loaded target needs no redundant partial load");
         }
         for(int i=0;i<auxiliaries.Length;++i) Check(auxiliaries[i].IsBlanked==(i==5), "Exact original auxiliary blank states restored");
         Check(hiddenBody.IsBlanked && hiddenChild.IsBlanked, "Hidden descendants stay hidden");
@@ -113,7 +111,7 @@ internal static class BoundingBoxExportTests
         Check(uf.Obj.Deleted.Count==2, "Temporary matrix and CSYS both deleted");
 
         session.CaptureObserver = view => { throw new IOException("capture fails"); };
-        try { new ImageExporter(new[]{ImageExporter.SnapViewType.Top}).Process(comp,session,output,"failed"); }
+        try { TransactionTestScope.Run(new ImageExporter(new[]{ImageExporter.SnapViewType.Top}), comp,session,output,"failed"); }
         catch(IOException) { }
         for(int i=0;i<auxiliaries.Length;++i) Check(auxiliaries[i].IsBlanked==(i==5), "Capture failure restores auxiliaries");
     }
@@ -161,10 +159,10 @@ internal static class BoundingBoxExportTests
         Check(!File.Exists(Path.Combine(output,"BoundingBoxResult.csv")),"No incomplete CSV row on failed query");
         Check(uf.Obj.Deleted.Count==2 && session.Parts.Display==root && !root.ComponentAssembly.RootComponent.Children[1].IsBlanked,
             "Query failure cleans temporary objects and restores visibility");
-        using(var context=new NxAssemblyExportContext(session,comp))
+        using(var context=new TransactionTestScope(session,comp,output,"target"))
         {
-            Fails(()=>new BoundingBoxExporter("ACS").Process(context,output,"fail"),"Shared context survives failed measurement");
-            new ImageExporter(new[]{ImageExporter.SnapViewType.Top}).Process(context,output,"still image");
+            Fails(()=>context.Process(new BoundingBoxExporter("ACS")),"Shared context survives failed measurement");
+            context.Process(new ImageExporter(new[]{ImageExporter.SnapViewType.Top}));
         }
         Check(session.LastImageBuilder.Destroyed,"Image succeeds after measurement fails without activation fallback");
         uf.Modl.Fail=false;

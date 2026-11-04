@@ -54,7 +54,7 @@ internal static class ImageViewTests
     private static void Capture(Session session, Component component, string output, string name,
         params ImageExporter.SnapViewType[] views)
     {
-        new ImageExporter(views).Process(component, session, output, name);
+        TransactionTestScope.Run(new ImageExporter(views), component, session, output, name);
     }
     public static int Run()
     {
@@ -116,7 +116,7 @@ internal static class ImageViewTests
             AssemblyTraverser.StopRequested = false;
             var previousBuilder = failedSession.LastImageBuilder;
             failedSession.Parts.BaseWork = (Part)failedComponent.Prototype;
-            Fails<InvalidOperationException>(() => new ImageExporter(config.viewList).Process(failedComponent, failedSession, output, "wrong"),
+            Fails<InvalidOperationException>(() => TransactionTestScope.Run(new ImageExporter(config.viewList), failedComponent, failedSession, output, "wrong"),
                 "Wrong work/display context is rejected");
             Check(failedSession.LastImageBuilder == previousBuilder, "Wrong context never captures another part");
             failedSession.Parts.BaseWork = failedRoot;
@@ -193,10 +193,11 @@ internal static class ImageViewTests
         Check(branch.IsBlanked && target.IsBlanked && hiddenDescendant.IsBlanked && hiddenSibling.IsBlanked &&
             !sibling.IsBlanked && !siblingInstance.IsBlanked && !ancestorBody.IsBlanked && !view.Scene[1].IsBlanked,
             "Restore exact visibility of changed objects; keep originally hidden objects hidden");
-        Check(session.Parts.Items.Count == 3 && session.Calls.Count == 1 && session.Calls[0] == "partial readonly prototype",
+        Check(session.Parts.Items.Count == 3 && session.Calls.Count == 0,
             "No sibling or hidden descendant load and no prototype activation");
 
         session = Setup(out root, out target);
+        ((Part)target.Prototype).PartLoadState = PartLoadState.MinimallyLoaded;
         ((Part)target.Prototype).ThrowOnPartialLoad = true;
         sibling = root.ComponentAssembly.RootComponent.Children[1];
         Fails<InvalidOperationException>(() => Capture(session, target, output, "load failure", ImageExporter.SnapViewType.Top),

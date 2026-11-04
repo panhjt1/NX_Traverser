@@ -1,6 +1,6 @@
 # 本地 agent：NX 2512 编译、验收与部署提示词
 
-更新时间：2026-11-04。目标分支：`fix/nx2512-teamcenter-readonly`；修改基线：`dabfb68`。这是本仓库的持续交接文档，后续每次代码、DLX 或构建配置变更都必须同步维护。
+更新时间：2026-11-04。目标分支：`fix/nx2512-teamcenter-readonly`；修改基线：`ebf7c61`。这是本仓库的持续交接文档，后续每次代码、DLX 或构建配置变更都必须同步维护。
 
 ## 任务与边界
 
@@ -18,7 +18,31 @@
 4. 在含 `NX_Traverser.csproj` 的解压目录中执行下方构建命令。构建脚本不调用 Git，也不自动下载依赖；NX 引用、MSBuild 和相应 Targeting Pack 需由本机提供。
 5. 如需额外开发包，通过可联网浏览器取得安装包/官方引用包后按公司允许的方式传入本地，不假设本地 agent 能执行在线安装或 NuGet 还原。
 
-## 本次更新：停止后续遍历
+## 本次更新：保持主循环 + 标准化即插即用事务
+
+接续 `ebf7c61`。对照原版 `2470a54` 的主循环/事务列表分工，保留 `Process + Finish` 组织方式，整理责任边界；没有恢复旧的原型激活、隔离窗口、整树关闭或对源数据的保存。接入规范及示例已写入 README 的“主循环与事务规范”。
+
+审查发现并处理：
+
+- 两个事务原有自行创建上下文的 `Process(Component, Session, ...)` 旁路，现已删除。唯一接口统一为 `Process(TransactionContext)`；事务不能构造/关闭公共上下文。`TransactionContext.cs` 是本次唯一新增的运行时源文件，提供目标信息、统一命名及可复用服务入口；另新增 `tests/TransactionContractTests.cs` 验证生命周期和扩展接入。
+- 主循环集中 `BuildTransactionHandlers` 默认注册、`ProcessTarget` 顺序派发和一次 `FinishHandlers` 收尾。新增 `Run(config, IEnumerable<ITransactionHandler>)` 显式注册入口，允许新事务不修改递归逻辑；构造参数由各事务验证，公共筛选/输出/深度由主循环配置。注册成功后启动检查失败也会调用每个 Finish，一项 Finish 抛错不影响后续回调。
+- 原 `NxAssemblyExportContext` 同时承担显示状态和测量枚举，现只负责显示范围/相机/辅助对象状态。实体枚举、精确盒查询、目标 ACS/WCS 变换、单位换算和临时 CSYS/矩阵清理集中到 `NxGeometry`。BoundingBoxExporter 只取得 `BoundingBoxResult` 并写 CSV；ImageExporter 只组织视角和 PNG 输出/Builder 清理。
+- 事务通过公共上下文按需准备显示服务。只读属性类事务不会被强制隐藏分支、加载整个目标显示子树或检查单建模视口；主循环仍按原规则获取目标原型及遍历所需的部分数据。
+- 新增每事务画面恢复边界：截图成功/异常/取消后，在执行下一事务前恢复相机、辅助对象与 WCS/三重轴；目标分支遮罩/加载仍共享到该目标事务全部结束，最后统一恢复、逐节点卸载。检查原 work/display/work component，扩展违反上下文要求时停止并保留部件，不能任由下一个事务继续。
+- `RunLog` 还原为纯日志记录；NX 调用前后及异常路径的取消检查移到 `TraversalCancellation.NxCall`，事务用 `context.NxCall/CheckCancellation/Log`。停止按钮和原有清理保护行为保留。
+- 已部分/完整加载的部件不再重复调用 LoadThisPartPartially，但仍登记本次使用，不能因此漏掉临时部件卸载。统一文件名按需生成，不给纯测量/属性事务额外计算图片名；重复截图视角只导出一次。ImageExporter 和 BoundingBoxExporter 均在构造时检查自身参数。
+
+### 本地本次优先验收
+
+1. 完整 ZIP 编译，加入 `TransactionContext.cs`；现有 `NxAssemblyExportContext.cs` 继续编译但变为内部实现。测试文件不加入插件。没有新增 Siemens API 或第三方依赖；.NET 4.7.2 兼容构建与已有 Windows Forms 引用保留。
+2. 若本地已有自定义事务，按 README 改成 `Process(TransactionContext)`，使用统一输入/服务，重新编译；不要保留旧参数重载或自己 new/Dispose 原装配上下文。每轮创建新的事务实例，Finish 仅关闭自身文件/汇总资源，不能操作已卸载的 NX 对象。
+3. 先通过现有 UI 分别跑 XYZ、截图及组合，核对 CSV 数值/列、PNG 内容/方向/辅助对象隐藏和逐节点释放与上一版一致。日志的模式说明改为统一“事务顺序”；图片事务结束后新增 `Transaction view restored`，最后仍有 `Export context restored` 再 Unload。
+4. 用 README 的注册入口加入一个只输出名称的事务，确认不修改主循环即可执行。仅名称事务不应出现 `Export context` 或隐藏分支调用。再把截图放在 XYZ 前面运行，确认 XYZ 不受上一事务的视图/辅助对象状态影响，仍只有一个目标显示上下文。
+5. 第一事务普通失败后，后续事务和下一目标应继续；取消后，后续事务/视角/目标应全部跳过，但所有已注册事务的 Finish 各执行一次，恢复和卸载照常。也覆盖启动时无工作部件、输出目录不可用和 Finish 抛错。
+6. 部件已经部分加载时日志可以不再出现 LoadThisPartPartially；仍须出现实际需要的 OpenComponents/加载。确认已使用的初始干净部分加载部件仍会卸载，初始完整加载/已修改部件不受影响。不要只用加载调用次数下降代替内存和状态核查。
+7. 用正常、截图失败、取消三种路径检查每事务恢复是否产生站点提示、额外加载或性能问题；这次改动的主要实机风险是恢复时机提前。云端只验证控制流/数学和编译引用，不能替代 NX/Teamcenter 验收。
+
+## 上次更新：停止后续遍历
 
 接续 `dabfb68`。用户反馈 NX 默认“工作进行中”取消只结束当前操作，后续遍历仍继续。本次提供独立、持续有效的停止入口，并把可观察到的 NX 取消信号接入整轮停止。
 
@@ -26,11 +50,11 @@
 - 窗口在独立 STA UI 线程运行，以免 NX 主线程忙于原生调用时按钮不响应。该线程只设置原有的线程安全停止标记，不调用任何 NX API、日志、渲染或部件操作。NX 工作仍全部在原线程。
 - 新增 `TraversalCancellation.cs`：在加载、组件、成员、测量实体、视角和带日志的 NX 调用前后检查停止请求。使用官方 `UFSession.Abort.AskFlagStatus(out bool)` 读取未被 NX 消耗的取消信号，先锁存整轮停止再调用 ClearAbort 确认处理；不调用 DisableAbort/EnableAbort，不猜错误码或匹配本地化弹窗文字。
 - 官方明确指出：NX 若已经处理取消，AskFlagStatus 可能返回 false。因此不能承诺每次默认“工作进行中”取消都能被追回；**整轮停止以独立按钮为可靠入口**。它不强制终止正在阻塞的 NX 调用；当前调用返回后才退出后续工作。
-- `RunLog.NxCall` 在正常返回和异常路径检查取消；`AssemblyTraverser` 把取消记录为 `[CANCELED]` 并停止后续处理，普通加载/导出错误仍沿用继续下个目标的规则。取消不计为普通部件失败，不额外弹错误框。已输出文件保留；取消的测量不写不完整 CSV 行。
+- `TraversalCancellation.NxCall` 在正常返回和异常路径检查取消（本次已从 RunLog 移出）；`AssemblyTraverser` 把取消记录为 `[CANCELED]` 并停止后续处理，普通加载/导出错误仍沿用继续下个目标的规则。取消不计为普通部件失败，不额外弹错误框。已输出文件保留；取消的测量不写不完整 CSV 行。
 - 恢复 blank/相机/坐标轴、删除临时 CSYS/矩阵、节点卸载不受停止检查阻断。取消监控接口本身失败时停止继续遍历；真实恢复/卸载失败仍报告错误并按原保护规则处理。
 - 工程增加 Framework 自带的 `System.Windows.Forms`、`System.Drawing` 引用，不新增 NuGet 依赖。正常结束等待窗口线程退出再卸载插件；若窗口退出异常仍存活，`GetUnloadOption` 暂用 AtTermination，且不允许启动另一轮，避免旧线程访问已卸载插件或干扰新任务。
 
-### 本地本次优先验收
+### 保留的停止功能验收
 
 1. 用完整 ZIP 编译，包含两个新源文件及上述框架引用，DLX 无改动。保留上一版原装配截图/XYZ、辅助对象隐藏、逐节点卸载的实现，旧文件删除清单见后文。
 2. 启动多零件、多视角及 XYZ+截图组合任务；应只出现一个控制窗口。分别在加载、XYZ 查询、第一张截图和两个目标之间点击“停止后续遍历”。当前 NX 调用返回后，不得再出现下一个目标的 OpenComponents/Process，也不得继续剩余视角/另一个导出事务。
@@ -78,7 +102,7 @@
 | `ImageExporter.cs`、`NxAssemblyExportContext.cs`、`NxViewState.cs` | 共用原装配显示范围；截图临时隐藏辅助对象，恢复 blank/相机/坐标轴；恢复失败停止并保留部件 |
 | `BoundingBoxExporter.cs`、`BoundingBoxMath.cs` | 原装配 occurrence 精确测量，目标 ACS/WCS 临时坐标系和单位换算；范围与显示实体对应；临时对象 finally 清理，失败不写不完整 CSV |
 | `TraversalCancellation.cs`、`TraversalStopWindow.cs` | 独立停止按钮与原生未消耗取消信号；整轮停止锁存，恢复/释放不中断，窗口线程退出后卸载 |
-| `RunLog.cs` | 调用前后和异常检查取消，保留成对的 NX 调用 begin/end、编号、完成状态和耗时；`Traversal.log` 同步 Listing Window，含阶段、只读/修改状态、NX 错误码；检测加载后新增修改标记；不清除修改标记 |
+| `RunLog.cs` | 只记录日志；取消检查由 TraversalCancellation 管理，保留成对的 NX 调用 begin/end、编号、完成状态和耗时；`Traversal.log` 同步 Listing Window，含阶段、只读/修改状态、NX 错误码；检测加载后新增修改标记；不清除修改标记 |
 | `NX_Traverser.csproj`、`scripts/build.ps1` | 默认 net48 / x64，新增显式 v4.7.2 兼容编译参数；使用当前安装的 NXBIN/managed；Siemens 引用 Copy Local=false；嵌入本机 NXSigningResource.res；输出按框架隔离的 DLL/DLX、构建日志和 SHA256 |
 | `tests/` | 独立 C# 核心回归和 XML/控件一致性验证；PartResourceTests 和 ImageViewTests 使用明确的测试替身验证资源管理器、显示上下文和截图恢复控制流；不是 NX SDK，不验证 Siemens ABI/API、真实 PNG 或弹窗 |
 
@@ -180,9 +204,9 @@ dotnet run --project .\tests\CoreTests.csproj -c Release
 
 ## 当前已验证及未验证
 
-- 云端 **205 项独立 C# 断言通过**：新增真实 AssemblyTraverser/RunLog/取消监控的整轮中断、取消后恢复卸载、正常错误继续、后续模块/视角/组件跳过和新一轮重置；另外保留数学/文本、所有权和清理、原装配上下文、实际 BoundingBoxExporter 的实例筛选/ACS/WCS/单位换算/失败清理、辅助对象隐藏与恢复、真实 NxGeometry 的部分加载选择、装配内显示状态恢复、构造/导出/恢复失败、取消、无输出文件、空画面，以及目标自身 ACS 的数学与截图调用补偿检查。
+- 云端 **243 项独立 C# 断言通过**：新增自定义事务注册/顺序、共享上下文、元数据事务不准备视图、每事务画面恢复、Finish 生命周期、上下文违规停止、参数验证及重复视角去重；新增真实 AssemblyTraverser/TransactionContext/RunLog/取消监控的整轮中断、取消后恢复卸载、正常错误继续、后续模块/视角/组件跳过和新一轮重置；另外保留数学/文本、所有权和清理、原装配上下文、实际 BoundingBoxExporter 的实例筛选/ACS/WCS/单位换算/失败清理、辅助对象隐藏与恢复、真实 NxGeometry 的部分加载选择、装配内显示状态恢复、构造/导出/恢复失败、取消、无输出文件、空画面，以及目标自身 ACS 的数学与截图调用补偿检查。
 - 测试使用 .NET 8.0.427 SDK 的 Roslyn 编译并执行；NX 相关代码与显式测试替身组合，生成的是假文件，不验证 Siemens API 签名、真实 PNG、窗口或弹窗。
-- `python tests/validate_dlx.py`、`git diff --check` 通过；17 个插件源文件及 5 个测试源文件通过 C# 7.3 语法解析，这不包含 NX SDK 类型检查。
+- `python tests/validate_dlx.py`、`git diff --check` 通过；18 个插件源文件及 6 个测试源文件通过 C# 7.3 语法解析，这不包含 NX SDK 类型检查。
 - 同一测试程序使用 Microsoft 官方 net472 1.0.3 引用程序集编译通过；真实停止窗口源码也用这些引用及 System.Windows.Forms/System.Drawing 单独编译通过，未在 Linux 运行 Windows UI；未在 Framework 4.7.2 运行，也未编译完整 NX 插件。此前已核对默认 v4.8、显式 v4.7.2 及独立输出目录，本次没有改构建目标。
 - 官方 API 依据见 `docs/NX2512_API_REVIEW.md`。**待本地**：完整插件的 NX SDK 编译、签名、DLX 加载、目标 ACS 图片方向、参考集范围、显示状态恢复、连续运行窗口数、显示恢复时隐式加载与内存峰值，以及 Teamcenter 提示。截图与 XYZ 均已移除原型激活路径；本次新增隐藏辅助对象和原装配 XYZ 的实机效果仍待验收。
 

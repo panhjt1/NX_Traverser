@@ -36,18 +36,20 @@ public class TraversalConfig
         maxDepth = 5;
     }
 
-    public void Validate()
+    public void Validate() { Validate(true); }
+
+    internal void Validate(bool builtInTransactions)
     {
-        if (useIsolatedImageView)
+        if (builtInTransactions && useIsolatedImageView)
             throw new NotSupportedException("隔离截图已停用：会产生额外窗口及绿色边框/编号。请移除 useIsolatedImageView=true。");
         if (string.IsNullOrWhiteSpace(filePath))
             throw new ArgumentException("请选择输出文件夹。");
         filePath = System.IO.Path.GetFullPath(filePath.Trim());
-        if (!flagImageOn && !flagXYZOn)
+        if (builtInTransactions && !flagImageOn && !flagXYZOn)
             throw new ArgumentException("请至少启用截图或包围盒测量。");
-        if (flagImageOn && (viewList == null || viewList.Length == 0))
+        if (builtInTransactions && flagImageOn && (viewList == null || viewList.Length == 0))
             throw new ArgumentException("启用截图时必须选择至少一个视角。");
-        if (viewList != null)
+        if (builtInTransactions && viewList != null)
             foreach (ImageExporter.SnapViewType view in viewList)
                 if (!Enum.IsDefined(typeof(ImageExporter.SnapViewType), view))
                     throw new ArgumentException("无效的截图视角。");
@@ -55,6 +57,6 @@ public class TraversalConfig
             throw new ArgumentOutOfRangeException("maxDepth", "最大层级必须在 0 到 100 之间。");
         namePatterns = ExportUtilities.NormalizePatterns(namePatterns);
         idPatterns = ExportUtilities.NormalizePatterns(idPatterns);
-        coordinateSelection = ExportUtilities.NormalizeCoordinateMode(coordinateSelection);
+        if (builtInTransactions) coordinateSelection = ExportUtilities.NormalizeCoordinateMode(coordinateSelection);
     }
 }

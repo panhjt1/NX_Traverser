@@ -6,7 +6,7 @@ using NXOpen.UF;
 
 // Temporary occurrence visibility in the EXISTING assembly/window. No isolate
 // view, layout change, work-part switch, reference-set edit or source WCS write.
-public sealed class NxAssemblyExportContext : IDisposable
+internal sealed class NxAssemblyExportContext : IDisposable
 {
     private sealed class Visibility
     {
@@ -19,7 +19,9 @@ public sealed class NxAssemblyExportContext : IDisposable
     private readonly List<Component> _path = new List<Component>();
     private readonly Dictionary<Tag, Visibility> _changed = new Dictionary<Tag, Visibility>();
     private readonly NxViewState _state;
-    private bool _disposed;
+    private bool _disposed, _restoring;
+    private NxViewState _frameState;
+    private readonly Dictionary<Tag, Visibility> _frameChanged = new Dictionary<Tag, Visibility>();
     public Part AssemblyPart { get { return _assembly; } }
     public Component Target { get { return _target; } }
     public Part TargetPart { get { return _target.Prototype as Part; } }
@@ -71,7 +73,7 @@ public sealed class NxAssemblyExportContext : IDisposable
             }
             ChangeVisibility(siblings, true, "Hide other branches");
             ChangeVisibility(pathToShow, false, "Show target path");
-            RunLog.NxCall("Prepare target display " + target.DisplayName,
+            TraversalCancellation.NxCall("Prepare target display " + target.DisplayName,
                 () => NxGeometry.PrepareDisplay(target, _assembly.ComponentAssembly));
             _session.DisplayManager.MakeUpToDate();
             AssertContext();
@@ -90,6 +92,8 @@ public sealed class NxAssemblyExportContext : IDisposable
             // Record BEFORE calling NX: a failed batch may have partially applied.
             if (!_changed.ContainsKey(obj.Tag))
                 _changed.Add(obj.Tag, new Visibility { Object = obj, Blanked = obj.IsBlanked });
+            if (_frameState != null && !_frameChanged.ContainsKey(obj.Tag))
+                _frameChanged.Add(obj.Tag, new Visibility { Object = obj, Blanked = obj.IsBlanked });
             changes.Add(obj);
         }
         ApplyVisibility(changes, blank, stage);
@@ -99,18 +103,18 @@ public sealed class NxAssemblyExportContext : IDisposable
     {
         if (objects.Count == 0) return;
         NxPartResources.BeforeLoad(null); // Show can implicitly load display data.
-        RunLog.NxCall(stage + " Count=" + objects.Count, () =>
+        TraversalCancellation.NxCall(stage + " Count=" + objects.Count, () =>
         {
             if (blank) _session.DisplayManager.BlankObjects(objects.ToArray());
             else _session.DisplayManager.UnblankObjects(objects.ToArray());
             foreach (DisplayableObject obj in objects)
                 if (obj.IsBlanked != blank) throw new InvalidOperationException("NX 未完成显示状态更改: tag=" + obj.Tag);
-        }, cancelable: !_disposed);
+        }, cancelable: !_restoring && !_disposed);
         RunLog.Write("[Image visibility] " + stage + " Changed=" + objects.Count +
             " LoadedParts=" + _session.Parts.ToArray().Length);
     }
 
-    private bool InTarget(DisplayableObject obj)
+    internal bool InTarget(DisplayableObject obj)
     {
         if (_target.Tag == _root.Tag) return true;
         Component owner = obj as Component ?? obj.OwningComponent;
@@ -127,19 +131,40 @@ public sealed class NxAssemblyExportContext : IDisposable
         return false;
     }
 
-    internal static DisplayableObject WholeObject(DisplayableObject obj)
+    public void PrepareImageView(View.Canned selected)
     {
-        var face = obj as Face;
-        if (face != null) return face.GetBody();
-        var edge = obj as Edge;
-        return edge != null ? edge.GetBody() : obj;
+        if (_frameState == null) _frameState = new NxViewState(View);
+        View.WcsVisibility = false;
+        View.TriadVisibility = false;
+        RunLog.Write("[Image overlays] WCS=False Triad=False（截图视图）");
+        RunLog.Write("[Orient] " + _target.DisplayName + " " + selected);
+        View.Orient(selected, NXOpen.View.ScaleAdjustment.Fit);
+        Matrix3x3 camera = View.Matrix;
+        double[,] matrix = ExportUtilities.PrototypeViewInAssembly(new double[,] {
+            { camera.Xx, camera.Xy, camera.Xz }, { camera.Yx, camera.Yy, camera.Yz },
+            { camera.Zx, camera.Zy, camera.Zz } }, Transform);
+        View.Orient(new Matrix3x3 { Xx = matrix[0, 0], Xy = matrix[0, 1], Xz = matrix[0, 2],
+            Yx = matrix[1, 0], Yy = matrix[1, 1], Yz = matrix[1, 2],
+            Zx = matrix[2, 0], Zy = matrix[2, 1], Zz = matrix[2, 2] });
+        TraversalCancellation.NxCall("Prepare assembly image frame", PrepareFrame);
+    }
+
+    // The driver restores frame changes after EACH transaction. The target
+    // branch mask/loading stays shared until all transactions have finished.
+    public void RestoreFrame()
+    {
+        if (_frameState == null) return;
+        RestoreChanges(_frameChanged, _frameState);
+        _frameChanged.Clear();
+        _frameState = null;
+        RunLog.Write("[Transaction view restored] 相机、辅助对象和坐标轴已恢复。");
     }
 
     // A component-only mask does not hide an ancestor's own bodies/curves/PMI.
     // Fit FIRST so off-screen objects cannot leak in when the camera changes.
     // Then mask auxiliary/foreign visible objects in assembly occurrence space, never by
     // changing the blank status of their prototype objects.
-    public void PrepareFrame()
+    private void PrepareFrame()
     {
         AssertContext();
         View.Fit();
@@ -147,9 +172,9 @@ public sealed class NxAssemblyExportContext : IDisposable
         var foreign = new List<DisplayableObject>();
         foreach (DisplayableObject obj in View.AskVisibleObjects())
         {
-            DisplayableObject whole = WholeObject(obj);
+            DisplayableObject whole = NxGeometry.WholeObject(obj);
             bool keepComponent = whole is Component && (InTarget(whole) || IsPathComponent(whole));
-            bool keepGeometry = InTarget(whole) && IsModelGeometry(whole);
+            bool keepGeometry = InTarget(whole) && NxGeometry.IsModelGeometry(whole);
             if (!keepComponent && !keepGeometry)
             {
                 if (!(whole is Component) && whole.OwningComponent == null && whole.OwningPart != _assembly)
@@ -163,8 +188,8 @@ public sealed class NxAssemblyExportContext : IDisposable
         bool hasTarget = false;
         foreach (DisplayableObject obj in View.AskVisibleObjects())
         {
-            DisplayableObject whole = WholeObject(obj);
-            if (InTarget(whole) && IsModelGeometry(whole)) hasTarget = true;
+            DisplayableObject whole = NxGeometry.WholeObject(obj);
+            if (InTarget(whole) && NxGeometry.IsModelGeometry(whole)) hasTarget = true;
             else if (!(whole is Component) || (!InTarget(whole) && !IsPathComponent(whole)))
                 throw new InvalidOperationException("画面仍含目标以外的对象，停止本次截图: tag=" + whole.Tag);
         }
@@ -172,95 +197,7 @@ public sealed class NxAssemblyExportContext : IDisposable
         AssertContext();
     }
 
-    private static bool IsModelGeometry(DisplayableObject obj)
-    {
-        return obj is Body || obj is NXOpen.Facet.FacetedBody;
-    }
-
-    // Use occurrence members, not AskVisibleObjects: camera occlusion must not
-    // remove a rear body from a dimension. The current reference set determines
-    // which members exist; no FindOccurrence of every prototype body is allowed.
-    public List<Tag> CollectVisibleBodyTags()
-    {
-        AssertContext();
-        NXOpen.Layer.StateInfo[] layers;
-        _assembly.Layers.GetVisibilitiesInView(View, out layers);
-        var bodies = new HashSet<Tag>();
-        var visited = new HashSet<Tag>();
-        CollectMembers(_target, layers, bodies, visited, 0);
-        AssertContext();
-        if (bodies.Count == 0) throw new InvalidOperationException("当前显示范围没有可精确测量的实体。");
-        RunLog.Write("[Measurement scope] DisplayedOccurrenceBodies=" + bodies.Count + " Target=" + _target.DisplayName);
-        return new List<Tag>(bodies);
-    }
-
-    private bool Displayed(DisplayableObject obj, NXOpen.Layer.StateInfo[] layers)
-    {
-        if (obj.IsBlanked) return false;
-        int layer = obj.Layer;
-        if (layer < 1 || layer > layers.Length)
-            throw new InvalidOperationException("无法确认对象的图层可见性: tag=" + obj.Tag);
-        if (layers[layer - 1].State == NXOpen.Layer.State.Hidden) return false;
-        for (Component c = obj as Component ?? obj.OwningComponent; c != null; c = c.Parent)
-        {
-            if (c.IsBlanked || c.IsSuppressed) return false;
-            if (c.Layer < 1 || c.Layer > layers.Length)
-                throw new InvalidOperationException("无法确认组件的图层可见性: tag=" + c.Tag);
-            if (layers[c.Layer - 1].State == NXOpen.Layer.State.Hidden) return false;
-        }
-        return true;
-    }
-
-    private void CollectMembers(Component component, NXOpen.Layer.StateInfo[] layers,
-        HashSet<Tag> bodies, HashSet<Tag> visited, int depth)
-    {
-        TraversalCancellation.Checkpoint();
-        if (depth > 100) throw new InvalidOperationException("装配结构超过 100 层。");
-        if (!Displayed(component, layers) || !visited.Add(component.Tag)) return;
-        if (component.Tag == _root.Tag)
-        {
-            foreach (Body body in _assembly.Bodies) AddBody(body, layers, bodies);
-            foreach (NXOpen.Facet.FacetedBody facet in _assembly.FacetedBodies) AddBody(facet, layers, bodies);
-            foreach (Component child in component.GetChildren()) CollectMembers(child, layers, bodies, visited, depth + 1);
-            return;
-        }
-        var members = new HashSet<Tag>();
-        Tag member = Tag.Null;
-        while (true)
-        {
-            UFSession.GetUFSession().Assem.CycleObjsInComp(component.Tag, ref member);
-            if (member == Tag.Null) break;
-            if (!members.Add(member)) throw new InvalidOperationException("组件成员枚举发生循环。");
-            TraversalCancellation.Checkpoint();
-            var obj = NXOpen.Utilities.NXObjectManager.Get(member) as DisplayableObject;
-            if (obj == null) continue;
-            var child = obj as Component;
-            if (child != null) CollectMembers(child, layers, bodies, visited, depth + 1);
-            else AddBody(WholeObject(obj), layers, bodies);
-        }
-        // Siemens uf_assem_eg3 cycles geometry and walks child components
-        // separately; component members need not contain the child occurrences.
-        foreach (Component child in component.GetChildren())
-            CollectMembers(child, layers, bodies, visited, depth + 1);
-    }
-
-    private void AddBody(DisplayableObject obj, NXOpen.Layer.StateInfo[] layers, HashSet<Tag> bodies)
-    {
-        if (!IsModelGeometry(obj) || !InTarget(obj) || !Displayed(obj, layers)) return;
-        var body = obj as Body;
-        var facet = obj as NXOpen.Facet.FacetedBody;
-        if (facet != null)
-        {
-            if (!facet.IsAssociatedBodyLoaded)
-                throw new InvalidOperationException("显示对象只有轻量化/小平面数据，无法精确测量；未切换或完整加载原型: tag=" + facet.Tag);
-            body = facet.AssociatedBody;
-        }
-        if (body == null || (body.OwningComponent == null && body.OwningPart != _assembly) || !InTarget(body))
-            throw new InvalidOperationException("无法取得原装配中的实体实例，拒绝使用原型坐标代替: tag=" + obj.Tag);
-        bodies.Add(body.Tag);
-    }
-
-    private void AssertContext()
+    internal void AssertContext()
     {
         View[] active = _assembly.Views.GetActiveViews();
         if (_session.Parts.Display != _assembly || _session.Parts.Work != _assembly ||
@@ -273,6 +210,19 @@ public sealed class NxAssemblyExportContext : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        RestoreChanges(_changed, _state);
+        RunLog.Write("[Export context restored] 原装配显示状态、相机、WCS/三重轴已恢复。");
+    }
+
+    private void RestoreChanges(Dictionary<Tag, Visibility> changes, NxViewState state)
+    {
+        _restoring = true;
+        try { RestoreChangesCore(changes, state); }
+        finally { _restoring = false; }
+    }
+
+    private void RestoreChangesCore(Dictionary<Tag, Visibility> changes, NxViewState state)
+    {
         var errors = new List<Exception>();
         // Attempt every restoration category even when another category fails.
         // Re-hide the originally hidden path before showing other branches.
@@ -281,18 +231,18 @@ public sealed class NxAssemblyExportContext : IDisposable
             try
             {
                 var objects = new List<DisplayableObject>();
-                foreach (Visibility entry in _changed.Values)
+                foreach (Visibility entry in changes.Values)
                     if (entry.Blanked == blank && entry.Object.IsBlanked != blank) objects.Add(entry.Object);
                 ApplyVisibility(objects, blank, "Restore visibility " + blank);
             }
             catch (Exception ex) { errors.Add(ex); }
         }
-        try { _state.Restore(); } catch (Exception ex) { errors.Add(ex); }
+        try { state.Restore(); } catch (Exception ex) { errors.Add(ex); }
         try
         {
             _session.DisplayManager.MakeUpToDate();
             AssertContext();
-            foreach (Visibility entry in _changed.Values)
+            foreach (Visibility entry in changes.Values)
                 if (entry.Object.IsBlanked != entry.Blanked) throw new InvalidOperationException("显示状态未完整恢复。");
         }
         catch (Exception ex) { errors.Add(ex); }
@@ -303,6 +253,5 @@ public sealed class NxAssemblyExportContext : IDisposable
             foreach (Exception ex in errors) RunLog.Error("恢复装配内截图状态失败", ex);
             throw new InvalidOperationException("原装配截图状态未完整恢复，已停止并保留当前加载部件。", errors[0]);
         }
-        RunLog.Write("[Export context restored] 原装配显示状态、相机、WCS/三重轴已恢复。");
     }
 }

@@ -1,6 +1,6 @@
 # NX 2512 官方 API 核对与审查记录
 
-核对日期：2026-11-04。本次基线：`dabfb68`。NX API 核对以 **Siemens 官方 2512 文档**为依据，不把旧版社区示例视为新版本 API；用户运行证据和 Microsoft 构建资料另行注明。官方文档浏览器页面动态加载，本文链接到同一文档的正文或参考类。
+核对日期：2026-11-04。本次基线：`ebf7c61`。NX API 核对以 **Siemens 官方 2512 文档**为依据，不把旧版社区示例视为新版本 API；用户运行证据和 Microsoft 构建资料另行注明。官方文档浏览器页面动态加载，本文链接到同一文档的正文或参考类。
 
 ## 版本、构建和部署
 
@@ -21,7 +21,19 @@
 
 本次使用 Microsoft 官方 net472 引用程序集编译了无 NX 依赖的 `BoundingBoxMath.cs`、`ExportUtilities.cs` 和核心测试程序，并检查了两种目标的 MSBuild 项目求值。未在 Framework 4.7.2 运行时执行测试，也未以 NX SDK 编译完整插件。
 
-## 本次：整轮停止与“工作进行中”的取消
+## 本次：主循环与事务责任边界
+
+对照原版 `2470a54` 的 BuildTransactionHandlers/Process/Finish 主线，本次保持顺序事务列表，新增显式注册重载而不把递归写进事务。标准接口为 `Process(TransactionContext)` + `Finish()`；这是源码接口调整，本地自定义扩展需迁移并重新编译，旧的直接 Process(Component, Session, ...) 入口已移除。README 给出责任表和接入示例。
+
+- `AssemblyTraverser` 唯一拥有目标上下文生命周期、事务派发/统计/错误策略、逐节点资源释放及整轮 Finish。启动检查失败也收尾；每事务成功返回须包含公共画面恢复和上下文核验。
+- `TransactionContext` 是借用输入与服务入口，没有公开构造或 Dispose。元数据事务不初始化显示范围；需要截图/精确测量时才创建内部 NxAssemblyExportContext，一目标共享一次。
+- 原装配显示/视图状态由 NxAssemblyExportContext 管理；原先混在该类及 BoundingBoxExporter 的实体枚举、坐标变换、精确查询/临时对象清理移入 NxGeometry。两个事务只承担输出职责。公共截图服务在每事务后恢复画面，目标分支遮罩在全部事务结束后恢复。
+- 官方 BasePart.LoadThisPartPartially 对已经部分加载的部件无作用。因此跳过已部分/完整加载部件的重复调用，同时保留 NxPartResources.BeforeLoad 的使用登记，确保不会破坏卸载所有权规则。
+- RunLog 不再决定取消；TraversalCancellation 包装带日志的 NX 调用。取消入口、原生信号限制、清理绕过取消的规则不变。
+
+本次没有新增 Siemens API，沿用下文已核对的 2512 接口。新的主要原生风险是每事务恢复的时机变化，需本地测试截图→测量的逆序、失败/取消、临时加载和显示状态。不能用离线契约测试代替真实 NX 状态验证。
+
+## 已有：整轮停止与“工作进行中”的取消
 
 [UFAbort .NET 2512](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a77630.html) 提供 `AskFlagStatus(out bool)`、`ClearAbort()`、`DisableAbort()`、`EnableAbort()`。本次只使用前两个。不存在已核实的 AskAbort 调用，不能根据名字猜接口。
 
@@ -90,7 +102,7 @@
 | [View.WcsVisibility/TriadVisibility](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a81942.html)、[WCS.CoordinateSystem](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a82066.html) | 截图使用视图级开关临时隐藏坐标轴，并恢复原值；不读写 WCS 来决定图片方向。WCS 是独立的工作坐标系对象，不能因结构从 Teamcenter 打开就假定与 ACS 一致 |
 | [ImageExportBuilder](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a61974.html) | RegionMode=false、Png、Transparent、EnhanceEdges、Commit/finally Destroy；普通图形区域尺寸，无固定 1600×1200。本实现要求原装配 work=display 且只有一个活动建模视口，不创建新窗口 |
 
-`NxAssemblyExportContext` 由已验收的 NxAssemblyImageContext 扩展并更名；两种导出共用一次原装配显示范围和状态恢复。结束时尝试恢复所有状态类别；任何恢复错误停止并保留当前加载集合。仅在全部恢复并核验原 work/display/work component/活动视口后才由资源管理器卸载。显示操作可能隐式加载；每批记录 LoadedParts，仍需本地确认内存峰值和恢复显示的成本。
+`NxAssemblyExportContext` 由用户确认截图路线的 NxAssemblyImageContext 扩展并更名，现为内部显示服务；两种导出经 TransactionContext 共用一次原装配显示范围，并在每事务后恢复画面。结束时尝试恢复所有状态类别；任何恢复错误停止并保留当前加载集合。仅在全部恢复并核验原 work/display/work component/活动视口后才由资源管理器卸载。显示操作可能隐式加载；每批记录 LoadedParts，仍需本地确认内存峰值和恢复显示的成本。
 
 图片内容采用首次匹配实例的参考集及隐藏状态，方向按原型 ACS；并非保证与“单独打开完整原型”显示完全相同。不改参考集、图层、源 WCS、不 Save/Checkout/清 IsModified。精确测量按目标自身 ACS/WCS 的方向，在原装配上下文查询当前显示范围的实体。旧 `useIsolatedImageView=true` 仍被拒绝，无图像失败后的原型激活回退。
 
@@ -152,4 +164,4 @@ CSV 首五列兼容，范围列为 `DisplayedOccurrenceBodies`；同一原型不
 
 ## 验证边界
 
-本次已执行 DLX/XML/映射检查及 205 项独立 C# 断言。数学/文本/所有权策略之外，真实 AssemblyTraverser/RunLog/取消监控、资源管理器、原装配共享上下文、NxGeometry 部分加载选择、装配内截图及实际 BoundingBoxExporter 代码与显式 NX 测试替身组合编译并验证控制流；替身不证明官方 API 签名或原生行为。还以官方 net472 框架引用完成同一测试程序的编译，未在 Framework 4.7.2 运行。未执行 NX SDK 全量编译、NX 原生 DLX 加载、PNG 渲染、Teamcenter 实机测试或本地签名；这些由 [本地 agent 交接](../LOCAL_AGENT_PROMPT.md) 列出。纯算法测试通过不等于 NX 2512 集成验收通过。
+本次已执行 DLX/XML/映射检查及 243 项独立 C# 断言。数学/文本/所有权策略之外，真实 AssemblyTraverser/TransactionContext/RunLog/取消监控、资源管理器、原装配共享上下文、NxGeometry 部分加载选择、装配内截图及实际 BoundingBoxExporter 代码与显式 NX 测试替身组合编译并验证控制流；替身不证明官方 API 签名或原生行为。还以官方 net472 框架引用完成同一测试程序的编译，未在 Framework 4.7.2 运行。未执行 NX SDK 全量编译、NX 原生 DLX 加载、PNG 渲染、Teamcenter 实机测试或本地签名；这些由 [本地 agent 交接](../LOCAL_AGENT_PROMPT.md) 列出。纯算法测试通过不等于 NX 2512 集成验收通过。

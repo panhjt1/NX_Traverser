@@ -43,29 +43,29 @@ internal static class TraversalCancellationTests
         {
             bool ran = false;
             UFSession.Instance.Abort.Flag = true;
-            Canceled(() => RunLog.NxCall("before", () => ran = true), "Pending native cancel prevents next operation");
+            Canceled(() => TraversalCancellation.NxCall("before", () => ran = true), "Pending native cancel prevents next operation");
             Check(!ran && AssemblyTraverser.StopRequested && !UFSession.Instance.Abort.Flag && UFSession.Instance.Abort.Clears == 1,
                 "Latch stop before clearing NX's transient signal");
             Canceled(TraversalCancellation.Checkpoint, "Stop stays latched after native flag is cleared");
-            RunLog.NxCall("cleanup", () => ran = true, cancelable: false);
+            TraversalCancellation.NxCall("cleanup", () => ran = true, cancelable: false);
             Check(ran, "Cleanup is not skipped by persistent stop flag");
         }
         Reset();
         using (var control = new TraversalCancellation())
         {
-            Canceled(() => RunLog.NxCall("returns normally", () => UFSession.Instance.Abort.Flag = true),
+            Canceled(() => TraversalCancellation.NxCall("returns normally", () => UFSession.Instance.Abort.Flag = true),
                 "Native cancel returned without exception still stops the task");
         }
         Reset();
         using (var control = new TraversalCancellation())
         {
-            Canceled(() => RunLog.NxCall("throws", () => { UFSession.Instance.Abort.Flag = true; throw new NXException(123); }),
+            Canceled(() => TraversalCancellation.NxCall("throws", () => { UFSession.Instance.Abort.Flag = true; throw new NXException(123); }),
                 "Pending cancel accompanying NX exception is not just a failed node");
         }
         Reset();
         using (var control = new TraversalCancellation())
         {
-            Canceled(() => RunLog.NxCall("managed cancellation", () => { throw new OperationCanceledException(); }),
+            Canceled(() => TraversalCancellation.NxCall("managed cancellation", () => { throw new OperationCanceledException(); }),
                 "Cancellation exception sets global latch even without native flag");
             Check(AssemblyTraverser.StopRequested, "Managed cancellation persists");
         }
@@ -73,7 +73,7 @@ internal static class TraversalCancellationTests
         using (var control = new TraversalCancellation())
         {
             bool sawError = false;
-            try { RunLog.NxCall("ordinary error", () => { throw new NXException(641070); }); }
+            try { TraversalCancellation.NxCall("ordinary error", () => { throw new NXException(641070); }); }
             catch (NXException) { sawError = true; }
             Check(sawError && !AssemblyTraverser.StopRequested, "Ordinary load error does not become user cancel");
         }
@@ -89,7 +89,7 @@ internal static class TraversalCancellationTests
         Reset();
         using (var control = new TraversalCancellation())
         {
-            Canceled(() => RunLog.NxCall("blocked NX equivalent", () => {
+            Canceled(() => TraversalCancellation.NxCall("blocked NX equivalent", () => {
                 // A separate UI thread may request stop without touching NX.
                 var thread = new Thread(AssemblyTraverser.RequestStop);
                 thread.Start(); thread.Join();
