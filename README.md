@@ -58,7 +58,9 @@ AssemblyTraverser.Run(new TraversalConfig {
 });
 ```
 
-`AssemblyTraverser.RequestStop()` 仅为外部协作式取消接口，不能中断正在阻塞的 NX API；本仓库不包含停止窗口。
+运行时会出现一个“NX Traverser — 遍历控制”小窗口。点击 **停止后续遍历**（或该窗口的 X），当前 NX 调用返回后就跳过剩余视角、事务和组件；显示恢复、临时坐标系清理及部件卸载仍执行，之后窗口自动关闭。已输出文件保留。停止不会强杀 NX，也不能让正在阻塞的原生调用立即返回。
+
+程序还检查 NX 的取消标记，将能读到的“工作进行中”取消提升为整轮停止。但官方说明 NX 可能已处理并清掉该信号，此时不能靠轮询可靠追溯；**需要停止整轮时，请使用新增的独立按钮**。外部程序仍可调用 `AssemblyTraverser.RequestStop()`。
 
 旧配置属性 `useIsolatedImageView` 默认 false，仅保留调用兼容。指定 true 会在运行前明确拒绝；请删除旧调用中的 true 设置。合并 ZIP 时删除旧 `NxImageContext.cs`、`NxAssemblyImageContext.cs` 和 `NxPartContext.cs`，保留 `NxViewState.cs` 和新增 `NxAssemblyExportContext.cs`，避免通配编译带入废弃代码。
 

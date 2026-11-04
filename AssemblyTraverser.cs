@@ -28,6 +28,8 @@ public sealed class AssemblyTraverser
     {
         if (config == null) throw new ArgumentNullException("config");
         config.Validate();
+        if (TraversalStopWindow.HasLiveWindow)
+            throw new InvalidOperationException("上一次停止窗口尚未关闭，不能启动新的遍历。");
         if (Interlocked.CompareExchange(ref _running, 1, 0) != 0)
             throw new InvalidOperationException("已有遍历任务正在执行。");
         try
@@ -61,8 +63,13 @@ public sealed class AssemblyTraverser
             if (_config.flagXYZOn) RunLog.Write("XYZ 模式=原装配内实体实例精确包围盒；只计当前显示范围；方向=目标自身 ACS/WCS；不激活原型。");
             try
             {
+                using (var cancellation = new TraversalCancellation())
+                using (var stopWindow = new TraversalStopWindow())
                 using (_resources = new NxPartResources(session))
+                {
+                    RunLog.Write("可点击独立窗口的“停止后续遍历”；当前 NX 调用返回后停止，恢复和卸载仍会执行。");
                     Traverse(root, rootPart.ComponentAssembly, session, 0, output);
+                }
             }
             finally
             {
@@ -79,6 +86,17 @@ public sealed class AssemblyTraverser
         }
     }
 
+    private void HandleFailure(string stage, Exception error)
+    {
+        if (TraversalCancellation.IsCancellation(error))
+        {
+            RunLog.Write("[CANCELED] " + stage + ": " + error.Message);
+            return;
+        }
+        ++_failed;
+        RunLog.Error(stage, error);
+    }
+
     private void Traverse(Component comp, ComponentAssembly assembly, Session session, int level, string output)
     {
         if (StopRequested || comp == null || comp.Tag == Tag.Null) return;
@@ -86,6 +104,7 @@ public sealed class AssemblyTraverser
         Tag pinnedPart = Tag.Null;
         try
         {
+            TraversalCancellation.Checkpoint();
             if (comp.IsSuppressed) { ++_skipped; return; }
             Part part = NxGeometry.EnsurePrototype(comp, assembly);
             _resources.Pin(part);
@@ -124,10 +143,11 @@ public sealed class AssemblyTraverser
                             try
                             {
                                 RunLog.Write("[Begin] " + stage);
+                                TraversalCancellation.Checkpoint();
                                 handler.Process(context, output, id + "_" + name);
                                 ++_completed;
                             }
-                            catch (Exception ex) { ++_failed; RunLog.Error(stage, ex); }
+                            catch (Exception ex) { HandleFailure(stage, ex); }
                         }
                     }
                 }
@@ -154,8 +174,7 @@ public sealed class AssemblyTraverser
         }
         catch (Exception ex)
         {
-            ++_failed;
-            RunLog.Error("Traverse level=" + level + " tag=" + componentTag, ex);
+            HandleFailure("Traverse level=" + level + " tag=" + componentTag, ex);
         }
         finally
         {

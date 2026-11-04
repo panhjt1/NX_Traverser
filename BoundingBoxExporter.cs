@@ -24,6 +24,7 @@ public sealed class BoundingBoxExporter : ITransactionHandler
 
     public void Process(NxAssemblyExportContext context, string outputFolder, string descriptiveName)
     {
+        TraversalCancellation.Checkpoint();
         Component comp = context.Target;
         Part part = context.TargetPart;
         if (part == null) throw new InvalidOperationException("无法取得测量目标。");
@@ -53,7 +54,7 @@ public sealed class BoundingBoxExporter : ITransactionHandler
             uf.Csys.CreateTempCsys(origin, temporaryMatrix, out temporaryCsys);
             foreach (Tag body in bodies)
             {
-                if (AssemblyTraverser.StopRequested) throw new OperationCanceledException("遍历已停止。");
+                TraversalCancellation.Checkpoint();
                 var corner = new double[3];
                 var directions = new double[3, 3];
                 var distances = new double[3];
@@ -82,6 +83,7 @@ public sealed class BoundingBoxExporter : ITransactionHandler
                 throw new InvalidOperationException("临时测量对象未完整清理，已停止。", cleanupErrors[0]);
             }
         }
+        TraversalCancellation.Checkpoint();
         double[] dimensions = box.Dimensions();
         for (int i = 0; i < dimensions.Length; ++i) dimensions[i] *= unitScale;
         if (_writer == null)

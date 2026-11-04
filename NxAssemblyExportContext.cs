@@ -28,6 +28,7 @@ public sealed class NxAssemblyExportContext : IDisposable
 
     public NxAssemblyExportContext(Session session, Component target)
     {
+        TraversalCancellation.Checkpoint();
         _session = session; _target = target;
         _assembly = session.Parts.Display;
         _workComponent = session.Parts.WorkComponent;
@@ -104,7 +105,7 @@ public sealed class NxAssemblyExportContext : IDisposable
             else _session.DisplayManager.UnblankObjects(objects.ToArray());
             foreach (DisplayableObject obj in objects)
                 if (obj.IsBlanked != blank) throw new InvalidOperationException("NX 未完成显示状态更改: tag=" + obj.Tag);
-        });
+        }, cancelable: !_disposed);
         RunLog.Write("[Image visibility] " + stage + " Changed=" + objects.Count +
             " LoadedParts=" + _session.Parts.ToArray().Length);
     }
@@ -213,7 +214,7 @@ public sealed class NxAssemblyExportContext : IDisposable
     private void CollectMembers(Component component, NXOpen.Layer.StateInfo[] layers,
         HashSet<Tag> bodies, HashSet<Tag> visited, int depth)
     {
-        if (AssemblyTraverser.StopRequested) throw new OperationCanceledException("测量已停止。");
+        TraversalCancellation.Checkpoint();
         if (depth > 100) throw new InvalidOperationException("装配结构超过 100 层。");
         if (!Displayed(component, layers) || !visited.Add(component.Tag)) return;
         if (component.Tag == _root.Tag)
@@ -230,7 +231,7 @@ public sealed class NxAssemblyExportContext : IDisposable
             UFSession.GetUFSession().Assem.CycleObjsInComp(component.Tag, ref member);
             if (member == Tag.Null) break;
             if (!members.Add(member)) throw new InvalidOperationException("组件成员枚举发生循环。");
-            if (AssemblyTraverser.StopRequested) throw new OperationCanceledException("测量已停止。");
+            TraversalCancellation.Checkpoint();
             var obj = NXOpen.Utilities.NXObjectManager.Get(member) as DisplayableObject;
             if (obj == null) continue;
             var child = obj as Component;

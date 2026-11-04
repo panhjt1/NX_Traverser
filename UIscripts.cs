@@ -47,7 +47,8 @@ public sealed class ClassLibrary1 : IDisposable
 
     public static int GetUnloadOption(string arg)
     {
-        return (int)Session.LibraryUnloadOption.Immediately;
+        return (int)(TraversalStopWindow.HasLiveWindow
+            ? Session.LibraryUnloadOption.AtTermination : Session.LibraryUnloadOption.Immediately);
     }
 
     public void Dispose() { _dialog.Dispose(); }

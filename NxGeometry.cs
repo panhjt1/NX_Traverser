@@ -7,6 +7,7 @@ internal static class NxGeometry
 {
     public static Part EnsurePrototype(Component component, ComponentAssembly assembly)
     {
+        TraversalCancellation.Checkpoint();
         Part part = component.Prototype as Part;
         if (part == null)
         {
@@ -49,7 +50,7 @@ internal static class NxGeometry
     private static void PrepareDisplay(Component component, ComponentAssembly assembly,
         HashSet<Tag> ancestors, int depth)
     {
-        if (AssemblyTraverser.StopRequested) throw new OperationCanceledException("导出加载已停止。");
+        TraversalCancellation.Checkpoint();
         if (component.IsSuppressed || component.IsBlanked) return;
         if (depth > 100) throw new InvalidOperationException("装配结构超过 100 层。");
         Part part = EnsurePrototype(component, assembly);

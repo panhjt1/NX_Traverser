@@ -8,6 +8,11 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="CoreTests.cs" />
+    <Compile Include="TraversalCancellationTests.cs" />
+    <Compile Include="../AssemblyTraverser.cs" Link="AssemblyTraverser.cs" />
+    <Compile Include="../AssemblyTraverser.Utilities.cs" Link="AssemblyTraverser.Utilities.cs" />
+    <Compile Include="../RunLog.cs" Link="RunLog.cs" />
+    <Compile Include="../TraversalCancellation.cs" Link="TraversalCancellation.cs" />
     <Compile Include="PartResourceTests.cs" />
     <Compile Include="ImageViewTests.cs" />
     <Compile Include="../NxViewState.cs" Link="NxViewState.cs" />

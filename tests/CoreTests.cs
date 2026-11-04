@@ -68,7 +68,7 @@ internal static class CoreTests
         Assert(ExportUtilities.SafeFileStem(new string('x', 300), "long").Length < 100, "Bound filename length");
         LifetimeRegression();
         _checks += PartResourceTests.Run();
-        _checks += ImageViewTests.Run() + BoundingBoxExportTests.Run();
+        _checks += ImageViewTests.Run() + BoundingBoxExportTests.Run() + TraversalCancellationTests.Run();
         Console.WriteLine("PASS: " + _checks + " core regression checks");
     }
 

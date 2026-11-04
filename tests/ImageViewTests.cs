@@ -21,7 +21,7 @@ internal static class ImageViewTests
     }
     internal static Session Setup(out Part root, out Component component)
     {
-        AssemblyTraverser.Stopped = false;
+        AssemblyTraverser.StopRequested = false;
         var session = new Session();
         root = session.Add("display root", PartLoadState.FullyLoaded);
         session.Parts.BaseWork = root;
@@ -113,7 +113,7 @@ internal static class ImageViewTests
                 failedSession.LastImageBuilder.Destroyed && failedSession.Parts.Display == failedRoot,
                 "Cancellation restores view/context and releases builder");
 
-            AssemblyTraverser.Stopped = false;
+            AssemblyTraverser.StopRequested = false;
             var previousBuilder = failedSession.LastImageBuilder;
             failedSession.Parts.BaseWork = (Part)failedComponent.Prototype;
             Fails<InvalidOperationException>(() => new ImageExporter(config.viewList).Process(failedComponent, failedSession, output, "wrong"),
@@ -130,7 +130,7 @@ internal static class ImageViewTests
             failedSession.CaptureObserver = view => view.FailTransformRestore = true;
             Fails<InvalidOperationException>(() => Capture(failedSession, failedComponent, output, "restore", ImageExporter.SnapViewType.Top),
                 "Camera restoration error propagates");
-            Check(AssemblyTraverser.Stopped && saved.WcsVisibility && !saved.TriadVisibility &&
+            Check(AssemblyTraverser.StopRequested && saved.WcsVisibility && !saved.TriadVisibility &&
                 failedSession.Parts.Display == failedRoot, "Camera failure restores overlay flags and stops traversal");
             saved.FailTransformRestore = false;
             var state = new NxViewState(saved);
@@ -201,7 +201,7 @@ internal static class ImageViewTests
         sibling = root.ComponentAssembly.RootComponent.Children[1];
         Fails<InvalidOperationException>(() => Capture(session, target, output, "load failure", ImageExporter.SnapViewType.Top),
             "Display load failure propagates after the visibility mask was applied");
-        Check(!sibling.IsBlanked && root.Views.WorkView.Scale == 7 && !AssemblyTraverser.Stopped,
+        Check(!sibling.IsBlanked && root.Views.WorkView.Scale == 7 && !AssemblyTraverser.StopRequested,
             "Constructor failure restores mask and camera without losing the original session");
 
         session = Setup(out root, out target);
@@ -213,7 +213,7 @@ internal static class ImageViewTests
         };
         Fails<InvalidOperationException>(() => Capture(session, target, output, "batch failure", ImageExporter.SnapViewType.Top),
             "Partially applied hide batch is handled");
-        Check(!sibling.IsBlanked && !AssemblyTraverser.Stopped, "Snapshot predates the failed NX call and permits rollback");
+        Check(!sibling.IsBlanked && !AssemblyTraverser.StopRequested, "Snapshot predates the failed NX call and permits rollback");
 
         session = Setup(out root, out target);
         using (var resources = new NxPartResources(session))
@@ -225,7 +225,7 @@ internal static class ImageViewTests
             Fails<InvalidOperationException>(() => Capture(session, target, output, "restore failure", ImageExporter.SnapViewType.Top),
                 "Visibility restoration failure is not silently ignored");
             resources.ReleaseUnused("unrestored mask");
-            Check(AssemblyTraverser.Stopped && !((Part)target.Prototype).Closed && root.Views.WorkView.Scale == 7 &&
+            Check(AssemblyTraverser.StopRequested && !((Part)target.Prototype).Closed && root.Views.WorkView.Scale == 7 &&
                 root.Views.WorkView.WcsVisibility, "Failed visibility restore still restores camera/overlays and retains dependencies");
         }
 
@@ -292,6 +292,8 @@ namespace NXOpen
     public interface IFitTo { }
     public class NXObject
     {
+        public enum AttributeType { String }
+        public struct AttributeInformation { public string StringValue; }
         public Tag Tag;
         public Part OwningPart;
         public Component OwningComponent;
@@ -393,6 +395,8 @@ namespace NXOpen.UF
     {
         public static readonly UFSession Instance = new UFSession();
         public static UFSession GetUFSession() { return Instance; }
+        public readonly UFAbort Abort = new UFAbort();
+        public readonly UFUi Ui = new UFUi();
         public readonly UFCsys Csys = new UFCsys();
         public readonly UFModl Modl = new UFModl();
         public readonly UFObj Obj = new UFObj();

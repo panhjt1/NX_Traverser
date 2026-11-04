@@ -37,7 +37,7 @@ public sealed class ImageExporter : ITransactionHandler
             RunLog.Write("[Image overlays] WCS=False Triad=False（截图视图）");
             foreach (SnapViewType selected in _views)
             {
-                if (AssemblyTraverser.StopRequested) throw new OperationCanceledException("截图已停止。");
+                TraversalCancellation.Checkpoint();
                 RunLog.Write("[Orient] " + comp.DisplayName + " " + selected);
                 view.Orient(ToCanned(selected), View.ScaleAdjustment.Fit);
                 Matrix3x3 camera = view.Matrix;

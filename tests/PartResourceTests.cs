@@ -64,7 +64,7 @@ internal static class PartResourceTests
             Check(active.Closed, "Release temporary work part after restoration");
         }
         Check(session.Parts.Items.Count == 6, "Only protected and untouched initial parts remain");
-        Check(!AssemblyTraverser.Stopped, "Successful cleanup does not request stop");
+        Check(!AssemblyTraverser.StopRequested, "Successful cleanup does not request stop");
 
         using (var resources = new NxPartResources(session))
         {
@@ -72,16 +72,16 @@ internal static class PartResourceTests
             Part refused = session.Add("refused close", PartLoadState.FullyLoaded);
             refused.RefuseClose = true;
             Check(!resources.ReleaseUnused("refused"), "Detect close that returns without unloading");
-            Check(AssemblyTraverser.Stopped && !refused.Closed, "Stop further loading when release fails");
+            Check(AssemblyTraverser.StopRequested && !refused.Closed, "Stop further loading when release fails");
             refused.RefuseClose = false;
         }
-        AssemblyTraverser.Stopped = false;
+        AssemblyTraverser.StopRequested = false;
         using (var resources = new NxPartResources(session))
         {
             NxPartResources.BeforeLoad(null);
             Part throwing = session.Add("throwing close", PartLoadState.PartiallyLoaded);
             throwing.ThrowOnClose = true;
-            Check(!resources.ReleaseUnused("exception") && AssemblyTraverser.Stopped, "Close exception requests stop");
+            Check(!resources.ReleaseUnused("exception") && AssemblyTraverser.StopRequested, "Close exception requests stop");
             throwing.ThrowOnClose = false;
         }
         CheckLoadStatus();
@@ -91,7 +91,7 @@ internal static class PartResourceTests
 
     private static void CheckInvalidationDuringClose()
     {
-        AssemblyTraverser.Stopped = false;
+        AssemblyTraverser.StopRequested = false;
         var session = new Session();
         Part root = session.Add("root", PartLoadState.FullyLoaded);
         session.Parts.BaseWork = root;
@@ -103,7 +103,7 @@ internal static class PartResourceTests
             Part parent = session.Add("assembly", PartLoadState.FullyLoaded);
             parent.ReleaseWithClose = child; // Parent is visited first in this enumeration.
             Check(resources.ReleaseUnused("cascade"), "Implicit dependent release must not read an inactive wrapper");
-            Check(parent.Closed && child.Closed && !AssemblyTraverser.Stopped, "Cascade release completes without false stop");
+            Check(parent.Closed && child.Closed && !AssemblyTraverser.StopRequested, "Cascade release completes without false stop");
 
             NxPartResources.BeforeLoad(null);
             Part ended = session.Add("inactive after close", PartLoadState.PartiallyLoaded);
@@ -113,7 +113,7 @@ internal static class PartResourceTests
             NxPartResources.BeforeLoad(null);
             Part live = session.Add("inactive but still loaded", PartLoadState.PartiallyLoaded);
             live.InactiveBeforeClose = true;
-            Check(!resources.ReleaseUnused("inactive but live") && AssemblyTraverser.Stopped, "Do not swallow 3615013 while part remains loaded");
+            Check(!resources.ReleaseUnused("inactive but live") && AssemblyTraverser.StopRequested, "Do not swallow 3615013 while part remains loaded");
             live.InactiveBeforeClose = false;
         }
         Check(session.Parts.Items.Count == 1 && !root.Closed, "Final sweep leaves protected root intact");
@@ -132,6 +132,12 @@ internal static class PartResourceTests
 
 namespace NXOpen
 {
+    public sealed class ListingWindow
+    {
+        public readonly List<string> Lines = new List<string>();
+        public void Open() { }
+        public void WriteLine(string line) { Lines.Add(line); }
+    }
     public class NXException : Exception
     {
         public int ErrorCode { get; private set; }
@@ -198,6 +204,8 @@ namespace NXOpen
         public readonly WCS WCS = new WCS();
         public readonly Layer.LayerManager Layers = new Layer.LayerManager();
         public readonly List<Facet.FacetedBody> FacetedBodies = new List<Facet.FacetedBody>();
+        public NXObject.AttributeInformation GetUserAttribute(string title, NXObject.AttributeType type, int index)
+        { return new NXObject.AttributeInformation(); }
         public string FullPath { get { return Name; } }
         public ViewCollection Views;
         public ViewCollection ModelingViews { get { return Views; } }
@@ -217,6 +225,8 @@ namespace NXOpen
     }
     public sealed class Session
     {
+        public static Session GetSession() { return UI.SessionOwner; }
+        public readonly ListingWindow ListingWindow = new ListingWindow();
         private int _next;
         public readonly PartCollection Parts = new PartCollection();
         public readonly List<string> Calls = new List<string>();
@@ -254,16 +264,4 @@ namespace NXOpen.Assemblies
             throw new InvalidOperationException("Unexpected attempt to open an unloaded off-target component");
         }
     }
-}
-internal static class AssemblyTraverser
-{
-    public static bool Stopped;
-    public static bool StopRequested { get { return Stopped; } }
-    public static void RequestStop() { Stopped = true; }
-}
-internal static class RunLog
-{
-    public static void Write(string text) { }
-    public static void Error(string stage, Exception error) { }
-    public static void NxCall(string stage, Action action) { action(); }
 }

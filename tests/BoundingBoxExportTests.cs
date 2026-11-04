@@ -176,7 +176,7 @@ internal static class BoundingBoxExportTests
         try{Export(comp,session,output,"ACS");}catch(OperationCanceledException){canceled=true;}
         Check(canceled && !File.Exists(Path.Combine(output,"BoundingBoxResult.csv")),"Cancellation after first body cannot emit a partial box");
         Check(!root.ComponentAssembly.RootComponent.Children[1].IsBlanked,"Measurement cancellation restores visibility");
-        uf.Modl.AfterQuery=null;AssemblyTraverser.Stopped=false;
+        uf.Modl.AfterQuery=null;AssemblyTraverser.StopRequested=false;
         var facet=new NXOpen.Facet.FacetedBody {Tag=(Tag)3500,OwningComponent=comp};
         uf.Assem.Members[comp.Tag]=new NXObject[]{facet};
         Fails(()=>Export(comp,session,output,"ACS"),"Lightweight-only data fails exact measurement explicitly");
@@ -186,8 +186,8 @@ internal static class BoundingBoxExportTests
         Check(Row(output).Contains(",2.000,3.000,4.000,"),"Facet with available occurrence body can be measured");
         uf.Obj.Fail=true;
         Fails(()=>Export(comp,session,output,"ACS"),"Temporary object deletion failure propagates");
-        Check(AssemblyTraverser.Stopped,"Cleanup failure stops further loading");
-        uf.Obj.Fail=false; AssemblyTraverser.Stopped=false;
+        Check(AssemblyTraverser.StopRequested,"Cleanup failure stops further loading");
+        uf.Obj.Fail=false; AssemblyTraverser.StopRequested=false;
     }
 }
 
@@ -268,8 +268,4 @@ namespace NXOpen.UF
         public readonly List<Tag> Deleted=new List<Tag>();public bool Fail;
         public void DeleteObject(Tag tag){Deleted.Add(tag);if(Fail)throw new InvalidOperationException("Simulated delete failure");}
     }
-}
-internal static class AssemblyTraverserUtils
-{
-    public static string GetDescriptiveName(Component comp){return comp.DisplayName;}
 }

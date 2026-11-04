@@ -38,7 +38,7 @@ internal sealed class RunLog : IDisposable
     // All NX calls remain on the calling NX thread. A paired record identifies
     // calls blocked by loading or a modal UI; elapsed time alone is not proof of
     // a dialog. Always record an end, including an API/status-check exception.
-    public static void NxCall(string stage, Action action)
+    public static void NxCall(string stage, Action action, bool cancelable = true)
     {
         int id = ++_callId;
         var timer = Stopwatch.StartNew();
@@ -46,8 +46,16 @@ internal sealed class RunLog : IDisposable
         Write("[NX call begin] #" + id + " " + stage);
         try
         {
+            if (cancelable) TraversalCancellation.Checkpoint();
             action();
+            if (cancelable) TraversalCancellation.Checkpoint();
             returned = true;
+        }
+        catch (Exception ex)
+        {
+            if (cancelable && TraversalCancellation.IsCancellation(ex))
+                throw new OperationCanceledException("用户取消: " + stage, ex);
+            throw;
         }
         finally
         {

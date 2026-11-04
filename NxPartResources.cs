@@ -97,7 +97,7 @@ internal sealed class NxPartResources : IDisposable
                     {
                         RunLog.Write("[Unload begin] " + name + " Modified=" + part.IsModified);
                         RunLog.NxCall("Close " + name, () =>
-                            part.Close(BasePart.CloseWholeTree.False, BasePart.CloseModified.CloseModified, null));
+                            part.Close(BasePart.CloseWholeTree.False, BasePart.CloseModified.CloseModified, null), cancelable: false);
                     }
                     catch (Exception ex) { closeError = ex; }
                 }

@@ -1,6 +1,6 @@
 # NX 2512 官方 API 核对与审查记录
 
-核对日期：2026-11-04。本次基线：`5478c9e`。NX API 核对以 **Siemens 官方 2512 文档**为依据，不把旧版社区示例视为新版本 API；用户运行证据和 Microsoft 构建资料另行注明。官方文档浏览器页面动态加载，本文链接到同一文档的正文或参考类。
+核对日期：2026-11-04。本次基线：`dabfb68`。NX API 核对以 **Siemens 官方 2512 文档**为依据，不把旧版社区示例视为新版本 API；用户运行证据和 Microsoft 构建资料另行注明。官方文档浏览器页面动态加载，本文链接到同一文档的正文或参考类。
 
 ## 版本、构建和部署
 
@@ -20,6 +20,16 @@
 构建脚本默认 v4.8，可显式指定 v4.7.2；中间文件、产物和日志按目标隔离。脚本把 MSB3274/MSB3275 作为失败处理，不通过旧 NX 引用或屏蔽警告来强行完成降级构建。需要本地 NX 2512 引用库的实际编译结果才能确定 v4.7.2 是否可用。
 
 本次使用 Microsoft 官方 net472 引用程序集编译了无 NX 依赖的 `BoundingBoxMath.cs`、`ExportUtilities.cs` 和核心测试程序，并检查了两种目标的 MSBuild 项目求值。未在 Framework 4.7.2 运行时执行测试，也未以 NX SDK 编译完整插件。
+
+## 本次：整轮停止与“工作进行中”的取消
+
+[UFAbort .NET 2512](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/nxopen_net/a77630.html) 提供 `AskFlagStatus(out bool)`、`ClearAbort()`、`DisableAbort()`、`EnableAbort()`。本次只使用前两个。不存在已核实的 AskAbort 调用，不能根据名字猜接口。
+
+[UF_ABORT_ask_flag_status 官方说明](https://docs.sw.siemens.com/documentation/external/PL20250429951538534/en-US/custom_api/ugopen_doc/uf_abort/global.html#UF_ABORT_ask_flag_status) 明确：尚未处理的中断请求可读到 true；**NX 已处理请求后，标记已重置，查询返回 false**。因此不能承诺只在每个 NX 调用返回后轮询就能追溯所有“工作进行中”取消。ClearAbort 仅用于已经处理的请求；本次先锁存应用层停止，再清掉观测到的原生信号，避免后续节点恢复执行。
+
+本次另加独立 Windows Forms 停止按钮，使用 Framework 自带引用，无 NX API 在 UI 线程执行。点击只设置 managed volatile 停止标记；主线程在当前调用返回、下一视角/实体/成员/事务/组件之前检查。NX 原生调用不被强制终止，恢复和释放代码绕过停止检查，普通异常与 OperationCanceledException 分别记录。没有猜取消错误码、匹配语言相关错误文字、全局 DisableAbort、线程强杀或自动点击原生对话框。
+
+窗口代码使用独立 STA 消息循环；正常结束等待线程退出。若退出超时，插件暂保留至 NX 终止，并拒绝新任务，避免仍存活窗口访问已卸载代码。Windows 窗口源码已用官方 net472 引用独立编译；模型窗口/进度框存在时按钮是否响应、是否混入 PNG、窗口关闭和 NX 插件生命周期仍需本地验证。
 
 ## 逐项核对
 
@@ -136,10 +146,10 @@ CSV 首五列兼容，范围列为 `DisplayedOccurrenceBodies`；同一原型不
 - 不再用坐标绝对值大于 1e6 的规则静默过滤实体；拒绝 NaN/Infinity/负尺寸；任一实体失败则不写不完整 CSV。
 - 多个实例共享同一个原型只导出一次；这里输出的是**首次匹配实例当前显示范围**的尺寸，ACS/WCS 方向属于该目标原型，不是顶层装配的每实例坐标报表。匹配子装配后不再单独导出其子件，沿用原筛选语义。
 - 已按本次用户要求改为逐节点卸载临时部件，保护用户原有完整加载/已修改/活动部件及递归祖先；详见下节。默认遍历深度仍为 5，可通过 `maxDepth` 调整。单个匹配大装配及 NX 缓存仍可能造成较高峰值，需实测。
-- 当前取消为外部调用 `AssemblyTraverser.RequestStop()` 的协作式取消；仓库没有停止窗口，不承诺 ESC 可以终止阻塞的 NX API 调用。
+- 当前取消由独立停止按钮、外部 `AssemblyTraverser.RequestStop()` 和可读到的 NX 取消信号触发；锁存本轮停止，当前调用返回后退出后续工作，恢复/释放仍执行。不能把 ESC 或原生进度框取消视为每次都可可靠追溯的整轮停止入口。
 - 每次输出到新的子目录，CSV 首五列兼容原字段，新增单位/坐标系/范围/实体数；名称转义、小数点固定、中文 UTF-8 BOM、PNG 文件名防冲突。
 - 恢复截图隐藏 WCS/三重轴的原有特性，改用 View 局部开关并在 finally 恢复原值；不恢复原版强制开关为固定值的副作用，不执行源几何清理。
 
 ## 验证边界
 
-本次已执行 DLX/XML/映射检查及 179 项独立 C# 断言。数学/文本/所有权策略之外，真实资源管理器、原装配共享上下文、NxGeometry 部分加载选择、装配内截图及实际 BoundingBoxExporter 代码与显式 NX 测试替身组合编译并验证控制流；替身不证明官方 API 签名或原生行为。还以官方 net472 框架引用完成同一测试程序的编译，未在 Framework 4.7.2 运行。未执行 NX SDK 全量编译、NX 原生 DLX 加载、PNG 渲染、Teamcenter 实机测试或本地签名；这些由 [本地 agent 交接](../LOCAL_AGENT_PROMPT.md) 列出。纯算法测试通过不等于 NX 2512 集成验收通过。
+本次已执行 DLX/XML/映射检查及 205 项独立 C# 断言。数学/文本/所有权策略之外，真实 AssemblyTraverser/RunLog/取消监控、资源管理器、原装配共享上下文、NxGeometry 部分加载选择、装配内截图及实际 BoundingBoxExporter 代码与显式 NX 测试替身组合编译并验证控制流；替身不证明官方 API 签名或原生行为。还以官方 net472 框架引用完成同一测试程序的编译，未在 Framework 4.7.2 运行。未执行 NX SDK 全量编译、NX 原生 DLX 加载、PNG 渲染、Teamcenter 实机测试或本地签名；这些由 [本地 agent 交接](../LOCAL_AGENT_PROMPT.md) 列出。纯算法测试通过不等于 NX 2512 集成验收通过。
